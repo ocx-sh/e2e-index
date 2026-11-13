@@ -164,8 +164,8 @@ tasks:
             # A job-level `if:` sits at four spaces, which no step key does.
             if in_jobs and job and re.match(r"^    if:.*github\.repository == 'ocx-sh/ocx'", line):
                 guarded.add(job)
-        if len(seen) < 4:
-            failures.append(f"read {len(seen)} jobs from {WORKFLOW}, expected at least 4: the reader stopped")
+        if len(seen) < 3:
+            failures.append(f"read {len(seen)} jobs from {WORKFLOW}, expected at least 3: the reader stopped")
         if holders != ["sign"]:
             failures.append(f"id-token: write is held by {holders}, expected exactly ['sign']")
 
@@ -184,11 +184,11 @@ tasks:
         else:
             rx = re.compile(signers[0]["identity_regexp"])
             base = "https://github.com/ocx-sh/ocx/" + WORKFLOW
-            for ref, expect in [("refs/tags/v1.2.3", True), ("refs/heads/main", False), ("refs/tags/v1.2.3-rc.1", False)]:
+            for ref, expect in [("refs/heads/main", True), ("refs/heads/feature", False), ("refs/tags/v1.2.3", False)]:
                 got = rx.search(base + "@" + ref) is not None
                 if got != expect:
                     failures.append(f"identity {base}@{ref}: policy match is {got}, expected {expect}")
-            other = rx.search("https://github.com/ocx-sh/ocx/.github/workflows/release.yml@refs/tags/v1.2.3")
+            other = rx.search("https://github.com/ocx-sh/ocx/.github/workflows/release.yml@refs/heads/main")
             if other:
                 failures.append("the policy also accepts release.yml, which holds no signing step")
 

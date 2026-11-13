@@ -8,10 +8,11 @@
 #       [--sbom PATH] [--sign] [--no-keep-tag] [--cascade] [--tags-file F]
 #       [--annotation KEY=VALUE]... [--metadata FILE]
 #
-# The `ocx` on PATH is the binary under release. Layout: bin/ocx plus the two licence
-# files at the package root, as the release archives carry them. Registry credentials and
-# signing identity come from the environment of `ocx` itself; this script reads none and
-# prints none. Exit 64 on a usage error, otherwise the exit code of the failing ocx step.
+# The `ocx` on PATH is the binary under release. Layout: bin/ocx (bin/ocx.exe for a
+# windows/* platform) plus the two licence files at the package root, as the release
+# archives carry them. Registry credentials and signing identity come from the environment
+# of `ocx` itself; this script reads none and prints none. Exit 64 on a usage error,
+# otherwise the exit code of the failing ocx step.
 set -euo pipefail
 
 usage() {
@@ -83,7 +84,9 @@ done
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/stage/bin"
-install -m 0755 "$binary" "$work/stage/bin/ocx"
+staged=ocx
+[[ "$platform" == windows/* ]] && staged=ocx.exe
+install -m 0755 "$binary" "$work/stage/bin/$staged"
 install -m 0644 "$root/LICENSE" "$work/stage/LICENSE"
 install -m 0644 "$root/LICENSE-THIRD-PARTY.md" "$work/stage/LICENSE-THIRD-PARTY.md"
 

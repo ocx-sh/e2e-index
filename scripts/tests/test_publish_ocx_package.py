@@ -20,6 +20,10 @@ BASE = [
 
 STUB = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$STUB_LOG"
+# `create` is the last moment the staged tree exists; record the binary it holds.
+if [[ "$1 $2" == "package create" ]]; then
+    printf 'layout: %s\\n' "$(cd "$3" && find bin -type f | sort | tr '\\n' ' ')" >> "$STUB_LOG"
+fi
 """
 
 
@@ -100,6 +104,23 @@ def test_each_flag_reaches_the_push(run, args: list[str], expected: list[str]) -
     push = push_line(calls)
     for fragment in expected:
         assert fragment in push
+
+
+@pytest.mark.parametrize(
+    ("platform", "binary"),
+    [
+        ("windows/amd64", "bin/ocx.exe"),
+        ("windows/arm64", "bin/ocx.exe"),
+        ("linux/amd64", "bin/ocx"),
+        ("darwin/arm64", "bin/ocx"),
+    ],
+)
+def test_the_binary_is_staged_under_the_name_its_platform_runs(
+    run, platform: str, binary: str
+) -> None:
+    result, calls = run("--platform", platform)
+    assert result.returncode == 0, result.stderr
+    assert [c for c in calls if c.startswith("layout: ")] == [f"layout: {binary} "]
 
 
 def test_the_metadata_flag_reaches_create(run) -> None:

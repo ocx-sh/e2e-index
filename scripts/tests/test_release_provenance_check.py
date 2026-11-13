@@ -182,6 +182,9 @@ def test_link_constants_match_the_release_bytes() -> None:
         "libgcc_s.so.1",
         "ld-linux-x86-64.so.2",
         "ld-linux-aarch64.so.1",
+        "librt.so.1",
+        "libpthread.so.0",
+        "libdl.so.2",
     }
 
 

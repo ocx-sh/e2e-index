@@ -58,18 +58,30 @@ def select_candidates(tags: Iterable[str], cutoff: datetime) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("kind", choices=("dev", "candidates"))
     parser.add_argument("--days", type=int, required=True)
-    parser.add_argument("--now", help="UTC time to measure from, ISO 8601; defaults to the clock")
+    parser.add_argument(
+        "--now", help="UTC time to measure from, ISO 8601; defaults to the clock"
+    )
     args = parser.parse_args(argv)
     if args.days < 0:
         print("release_prune_select: --days must be >= 0", file=sys.stderr)
         return 64
-    now = datetime.fromisoformat(args.now).astimezone(UTC) if args.now else datetime.now(UTC)
+    now = (
+        datetime.fromisoformat(args.now).astimezone(UTC)
+        if args.now
+        else datetime.now(UTC)
+    )
     cutoff = now - timedelta(days=args.days)
     tags = [line.strip() for line in sys.stdin if line.strip()]
-    chosen = select_dev(tags, cutoff) if args.kind == "dev" else select_candidates(tags, cutoff)
+    chosen = (
+        select_dev(tags, cutoff)
+        if args.kind == "dev"
+        else select_candidates(tags, cutoff)
+    )
     print("\n".join(chosen))
     return 0
 

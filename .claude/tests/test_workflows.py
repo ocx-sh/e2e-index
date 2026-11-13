@@ -4501,6 +4501,10 @@ def _announce_token_findings(documents: list[tuple[str, dict]]) -> list[str]:
         for step in job.get("steps") or []:
             if "OCX_ANNOUNCE_TOKEN" in (step.get("env") or {}) and "package announce" not in str(step.get("run")):
                 findings.append(f"{where}: step {step.get('name')!r} carries OCX_ANNOUNCE_TOKEN without announcing")
+            if "package announce" in str(step.get("run")):
+                write_auth = sorted(k for k in (step.get("env") or {}) if k.startswith("OCX_AUTH_"))
+                if write_auth:
+                    findings.append(f"{where}: announce step {step.get('name')!r} carries registry credentials {write_auth}")
             if "package prune" in str(step.get("run")) and "package announce" in str(step.get("run")):
                 findings.append(f"{where}: step {step.get('name')!r} prunes and announces in one step")
     return findings
@@ -4513,6 +4517,12 @@ def test_the_announce_token_is_scoped_to_the_announce_step() -> None:
 def test_the_announce_token_sweep_reds_a_prune_step_that_carries_it() -> None:
     old = '          OCX_AUTH_ghcr_io_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n        run: |\n          set -euo pipefail\n          ocx --remote --format json index list'
     new = old.replace("        run:", "          OCX_ANNOUNCE_TOKEN: ${{ secrets.OCX_ANNOUNCE_TOKEN }}\n        run:", 1)
+    assert _announce_token_findings(_mutated("release.yml", old, new))
+
+
+def test_the_announce_token_sweep_reds_an_announce_step_that_carries_a_registry_credential() -> None:
+    old = "          OCX_ANNOUNCE_TOKEN: ${{ secrets.OCX_ANNOUNCE_TOKEN }}\n        run: ocx package announce --tags-from-registry"
+    new = "          OCX_AUTH_ghcr_io_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n" + old
     assert _announce_token_findings(_mutated("release.yml", old, new))
 
 

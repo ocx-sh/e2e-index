@@ -41,12 +41,6 @@ Two shapes the crate split can break without any workflow going red:
   at all — so the predicate keys on `executionInfo.strategy`, and its red and green
   run over real BEP bytes in `test/fixtures/bep/cache_states.json`.
 
-- the signed release pipeline (`release.yml`, `backfill.yml`): which jobs may sign, the guards of the
-  `plan` step (run for real in a scratch repository), that a dev build reaches nothing but the dev
-  package, that `--force` prunes only dev builds, that the tag follows the signed publish, the platform
-  set against the cross taskfile, the inputs each caller passes, and the readiness gate on `publish`.
-  Each sweep is shown red on a mutated copy of the real text and green on the real files.
-
 The workflows are read with PyYAML (D11). One YAML 1.1 trap: the bare key
 `on` loads as the boolean `True`, so `_on` looks it up under both spellings.
 Glob liveness is `git ls-files -- ':(glob)<pattern>'`: git's `:(glob)`
@@ -1313,7 +1307,7 @@ CACHE_HOST = "bazel-cache.ocx.sh"
 WRITE_SECRET = "BAZEL_CACHE_WRITE_AUTH"
 #: The only binding a cache step may carry: no event predicate, no fallback.
 WRITE_AUTH = "${{ secrets.BAZEL_CACHE_WRITE_AUTH }}"
-#: The one gated form: `cross.yml` withholds the credential from a stamped build (D-24), the release bytes.
+#: The one gated form: `cross.yml` withholds the credential from a stamped build, the release bytes.
 STAMP_GATED_WRITE_AUTH = "${{ !inputs.stamp && secrets.BAZEL_CACHE_WRITE_AUTH || '' }}"
 RC_ACTION = ".github/actions/bazel-cache-rc"
 TELEMETRY_SECRET = "OTEL_OTLP_AUTH"
@@ -1756,7 +1750,7 @@ def _callers_without_the_secret(documents: list[tuple[str, dict]]) -> list[str]:
             findings.append(f"{where} calls {callee} with `secrets: inherit`")
             continue
         passed = passed if isinstance(passed, dict) else {}
-        # A stamped cross-build is handed no cache credential (D-24); the callee withholds it even if passed.
+        # A stamped cross-build is handed no cache credential; the callee withholds it even if passed.
         stamped = callee == "cross.yml" and str((job.get("with") or {}).get("stamp")).lower() == "true"
         findings += [
             f"{where} calls {callee} without passing the secret {secret}"
@@ -2777,7 +2771,7 @@ def _tracked_taskfiles() -> list[Path]:
 
 
 def _stamped_release_lines(path: Path) -> set[int]:
-    """The line numbers of `cross.taskfile.yml`'s `build:release` task: stamped bytes are built with no cache credential (D-24)."""
+    """The line numbers of `cross.taskfile.yml`'s `build:release` task: stamped bytes are built with no cache credential."""
     if path.name != "cross.taskfile.yml":
         return set()
     lines = path.read_text(encoding="utf-8").splitlines()
@@ -3962,7 +3956,7 @@ def _asset_findings(documents: list[tuple[str, dict]], v066: set[str] | None = N
     rows = [line.split() for line in str(release["env"]["PLATFORMS"]).splitlines() if line.strip()]
     v066 = _v066_archive_triples() if v066 is None else v066
     findings = []
-    # C-017(f): the archives the build writes are v0.6.6's, and what the workflow publishes is those minus the
+    # The archives the build writes are v0.6.6's, and what the workflow publishes is those minus the
     # glibc Linux ones, which are built and release-tested but never published.
     produced = set(_asset_target().values())
     if produced != v066:

@@ -790,7 +790,7 @@ mod tests {
         );
     }
 
-    /// D-14: a staged push has written no tag, so a signature can land first; `publish_cascade` then
+    /// A staged push has written no tag, so a signature can land first; `publish_cascade` then
     /// writes the primary, rolling and keep tags.
     #[tokio::test(flavor = "multi_thread")]
     async fn stage_writes_no_tag_until_publish_cascade() {

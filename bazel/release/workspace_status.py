@@ -3,25 +3,10 @@
 # Copyright 2026 The OCX Authors
 """`--workspace_status_command` of the release build (`task cross:build:release`).
 
-`build.rs`'s real provenance as workspace-status lines: `STABLE_OCX_<VAR>
-<value>`, one per compile-time variable `crates/ocx_cli/src/app/build_info.rs`
-reads, which `provenance.bzl` turns into a rustc env file. A value this script
-cannot produce is not printed and the binary omits the field, `build.rs`'s
-best-effort contract:
-
-* Git (vergen-gix `sha`, `describe(tags, dirty)`, `dirty(false)`,
-  `commit_timestamp`): nothing on a checkout without `.git`. Dirty is
-  tracked-file modification only; an untracked file is not dirt.
-* `VERGEN_BUILD_TIMESTAMP`: UTC now, always. A release build is never
-  incremental.
-* `__OCX_BUILD_BRANCH`: `GITHUB_REF_NAME` when `GITHUB_REF` is `refs/heads/*`
-  (a tag or pull-request ref names no branch), else `git rev-parse
-  --abbrev-ref HEAD` (absent on a detached HEAD, which prints `HEAD`).
-* `__OCX_BUILD_VERSION`, `__OCX_BUILD_CHANNEL` and six `GITHUB_*` passed
-  through from the client environment when set and single-line.
-
-Every key is STABLE_: Bazel re-runs an action on a stable-status change and
-never on a volatile one (`provenance.bzl` says why that matters).
+`build.rs`'s provenance as `STABLE_OCX_<VAR> <value>` lines, one per compile-time variable
+`build_info.rs` reads; `provenance.bzl` turns them into a rustc env file. A value this script
+cannot produce is not printed and the binary omits the field. Every key is STABLE_: Bazel
+re-runs an action on a stable-status change, never on a volatile one.
 """
 
 from __future__ import annotations
@@ -58,6 +43,7 @@ def git(*args: str) -> str | None:
 
 
 def branch(env: Mapping[str, str]) -> str | None:
+    """`GITHUB_REF_NAME` for a branch ref (a tag or pull-request ref names none), else the checked-out branch."""
     if env.get("GITHUB_REF", "").startswith(HEADS):
         return env.get("GITHUB_REF_NAME") or None
     name = git("rev-parse", "--abbrev-ref", "HEAD")

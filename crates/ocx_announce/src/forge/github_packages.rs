@@ -38,7 +38,7 @@ impl GithubPackagesDeleter {
 
 #[async_trait::async_trait]
 impl TagDeleter for GithubPackagesDeleter {
-    async fn delete(&self, _plan: &DeletePlan) -> Result<DeleteReport, PruneError> {
+    async fn delete(&self, _plan: &DeletePlan, _report: &mut DeleteReport) -> Result<(), PruneError> {
         let _ = (&self.api_base, &self.registry, &self.owner, &self.package, &self.token);
         unimplemented!("contract: see the module documentation")
     }

@@ -265,6 +265,20 @@ pub struct PackagePush {
     layers: Vec<LayerRef>,
 }
 
+/// The one platform manifest `--sbom` attests. A push stages exactly one platform, so any other count
+/// is refused rather than attesting an arbitrary manifest.
+fn sole_staged_digest(
+    staged: &[(ocx_oci::Platform, ocx_oci::Digest)],
+) -> Result<&ocx_oci::Digest, crate::error::UsageError> {
+    match staged {
+        [(_, digest)] => Ok(digest),
+        _ => Err(crate::error::UsageError::new(format!(
+            "--sbom attests exactly one platform manifest, but this push staged {}",
+            staged.len()
+        ))),
+    }
+}
+
 impl PackagePush {
     /// Refuses `--ci-annotations gitlab`, which `require_equals` reads as a bare flag plus a layer
     /// named `gitlab`.
@@ -426,7 +440,7 @@ impl PackagePush {
         let mut attestation = None;
         if let Some(predicate) = sbom_predicate {
             let options = signing.expect("--sbom resolves the signing options above");
-            let (_, digest) = staged_digests.first().expect("`stage` refuses an empty push set");
+            let digest = sole_staged_digest(&staged_digests)?;
             attestation = Some(Self::attest_sbom(&context, &identifier, digest, options, predicate).await?);
         }
 
@@ -614,6 +628,32 @@ async fn refresh_pushed_pins(
         .map(|tag| identifier.without_digest().clone_with_tag(tag))
         .collect();
     index_common::refresh_pushed_tags(context.local_index(), &oci_index, &packages).await;
+}
+
+#[cfg(test)]
+mod sbom_target_tests {
+    use super::sole_staged_digest;
+
+    fn staged(count: usize) -> Vec<(ocx_oci::Platform, ocx_oci::Digest)> {
+        let digest =
+            ocx_oci::Digest::try_from("sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")
+                .expect("fixture digest parses");
+        (0..count).map(|_| (ocx_oci::Platform::any(), digest.clone())).collect()
+    }
+
+    #[test]
+    fn exactly_one_staged_platform_is_attested() {
+        let one = staged(1);
+        assert_eq!(sole_staged_digest(&one).expect("one platform"), &one[0].1);
+    }
+
+    #[test]
+    fn zero_or_several_staged_platforms_are_a_usage_error() {
+        for count in [0, 2] {
+            let error = sole_staged_digest(&staged(count)).expect_err("not exactly one");
+            assert!(error.to_string().contains("--sbom"), "{error}");
+        }
+    }
 }
 
 #[cfg(test)]

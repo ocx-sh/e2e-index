@@ -246,6 +246,19 @@ tasks:
     cmds:
       - echo "release:verify - Release Readiness on the release commit is the gate; nothing to run locally"
 
+  # A local dev build, published to a local registry a second checkout can pin (scripts/local_publish.py).
+  local:registry:
+    desc: 'Run the local dev registry (zot, on-demand sync from ghcr.io) on localhost:${OCX_LOCAL_REGISTRY_PORT:-15000}; idempotent, prints its URL'
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - python3 scripts/local_publish.py registry
+
+  local:publish:
+    desc: 'Build the host triple stamped dev, publish it unsigned to the local registry; PUSH=ghcr also pushes ghcr.io/ocx-sh/dev/cli'
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - python3 scripts/local_publish.py publish {{if .PUSH}}--push {{shellQuote .PUSH}}{{end}}
+
   # Step 3 of the release flow (workflow-release.md): the tag exists only after readiness is green on
   # this exact commit. `release:prepare` cannot ask - the bump commit it prepares does not exist
   # while it runs - so the refusal sits on the step that creates the tag. `readiness-gate.yml`

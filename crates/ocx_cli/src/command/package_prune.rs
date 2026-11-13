@@ -164,6 +164,10 @@ impl PackagePrune {
             force: self.force,
             dry_run: self.dry_run,
         };
+        // A tags file that cannot be written would lose the record of what the delete removed.
+        if let (Some(path), false) = (&self.tags_file, self.dry_run) {
+            crate::conventions::check_tags_file_writable(path).await?;
+        }
         let run = match self.forge_for(&target.repository) {
             Some(ForgeKind::GitHub) => {
                 let deleter =

@@ -33,11 +33,12 @@ import signal
 import subprocess
 import sys
 import time
-import tomllib
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
+
+import tomllib
 
 DEFAULT_PORT = 15000
 LOCAL_PATH = "ocx-sh/dev/cli"

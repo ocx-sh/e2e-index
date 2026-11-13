@@ -7,7 +7,7 @@
     scripts/local_publish.py publish [--push ghcr]
 
 `registry` runs the toolchain's `zot` on localhost:$OCX_LOCAL_REGISTRY_PORT (default 15000), its
-store under $XDG_STATE_HOME/ocx/dev-registry, with on-demand sync from ghcr.io: a package the local
+store under $XDG_STATE_HOME/ocx/dev-registry/<port>, with on-demand sync from ghcr.io: a package the local
 registry lacks is pulled from ghcr.io on first request, so the registry stands in for ghcr.io
 through `OCX_MIRRORS`. Running it twice is a no-op that prints the URL.
 
@@ -28,15 +28,17 @@ import base64
 import json
 import os
 import platform
+import shutil
 import signal
 import subprocess
 import sys
 import time
-import tomllib
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
+
+import tomllib
 
 DEFAULT_PORT = 15000
 LOCAL_PATH = "ocx-sh/dev/cli"
@@ -58,12 +60,16 @@ class Refused(Exception):
 
 
 def port() -> int:
-    return int(os.environ.get("OCX_LOCAL_REGISTRY_PORT", DEFAULT_PORT))
+    raw = os.environ.get("OCX_LOCAL_REGISTRY_PORT", str(DEFAULT_PORT))
+    if not (raw.isascii() and raw.isdigit() and 1 <= int(raw) <= 65535):
+        raise Refused(f"OCX_LOCAL_REGISTRY_PORT must be a port in 1-65535, got '{raw}'")
+    return int(raw)
 
 
-def state_dir() -> Path:
+def state_dir(listen: int) -> Path:
+    # Keyed by port: a second registry's start must not overwrite the pid of a running one.
     base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
-    return Path(base) / "ocx" / "dev-registry"
+    return Path(base) / "ocx" / "dev-registry" / str(listen)
 
 
 def zot_config(store: Path, listen: int) -> dict[str, object]:
@@ -96,6 +102,10 @@ def start_registry(listen: int, state: Path) -> str:
     url = f"http://localhost:{listen}"
     if registry_up(listen):
         return url
+    if shutil.which("zot") is None:
+        raise Refused(
+            "zot is not on PATH; pull the project toolchain with `ocx pull` (or run via `ocx exec -- …`)"
+        )
     state.mkdir(parents=True, exist_ok=True)
     config = state / "config.json"
     config.write_text(
@@ -110,14 +120,16 @@ def start_registry(listen: int, state: Path) -> str:
             stdin=subprocess.DEVNULL,
             start_new_session=True,
         )
-    (state / "zot.pid").write_text(f"{proc.pid}\n", encoding="utf-8")
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             raise Refused(f"zot exited with {proc.returncode}; see {state / 'zot.log'}")
         if registry_up(listen):
+            # Only a confirmed start records its pid, so a failed one never replaces a live registry's.
+            (state / "zot.pid").write_text(f"{proc.pid}\n", encoding="utf-8")
             return url
         time.sleep(0.2)
+    proc.terminate()
     raise Refused(f"zot did not answer on {url} within 30s; see {state / 'zot.log'}")
 
 
@@ -283,9 +295,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.cmd == "registry":
             if args.stop:
-                stop_registry(state_dir())
+                stop_registry(state_dir(port()))
                 return 0
-            print(start_registry(port(), state_dir()))
+            listen = port()
+            print(start_registry(listen, state_dir(listen)))
         else:
             print("\n".join(publish(root, args.push or None)))
     except Refused as err:

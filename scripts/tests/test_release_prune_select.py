@@ -29,11 +29,23 @@ def test_dev_selects_only_old_build_tags_never_the_rolling_tag() -> None:
     ]
 
 
-def test_dev_with_zero_days_selects_every_build_and_still_not_the_rolling_tag() -> None:
-    assert sel.select_dev(TAGS, NOW) == [
-        "0.7.0-dev_20260101000000",
-        "0.7.0-dev_20261112000000",
+def test_dev_with_zero_days_keeps_the_newest_build_of_each_line() -> None:
+    # The rolling `X.Y.Z-dev` tag carries the newest build's digest; selecting that build makes
+    # `ocx package prune` refuse with prune_shared_version.
+    assert sel.select_dev(TAGS, NOW) == ["0.7.0-dev_20260101000000"]
+
+
+def test_dev_never_selects_the_only_build_of_a_quiet_line() -> None:
+    assert sel.select_dev(["0.7.0-dev", "0.7.0-dev_20200101000000"], NOW) == []
+
+
+def test_dev_keeps_the_newest_build_per_version_line() -> None:
+    tags = [
+        "0.6.0-dev_20200101000000",
+        "0.6.0-dev_20200201000000",
+        "0.7.0-dev_20200101000000",
     ]
+    assert sel.select_dev(tags, NOW) == ["0.6.0-dev_20200101000000"]
 
 
 def test_candidates_need_their_final_release_to_be_old_enough() -> None:
@@ -43,14 +55,21 @@ def test_candidates_need_their_final_release_to_be_old_enough() -> None:
         "0.6.0-rc1_20260820000000",
         "0.6.0-rc2_20260825000000",
     ]
-    assert sel.select_candidates(TAGS, NOW - timedelta(days=30)) == every_candidate_of_0_6_0
+    assert (
+        sel.select_candidates(TAGS, NOW - timedelta(days=30))
+        == every_candidate_of_0_6_0
+    )
     assert sel.select_candidates(TAGS, NOW - timedelta(days=90)) == []
 
 
-def test_every_candidate_of_an_old_enough_release_is_selected_with_its_rolling_tag() -> None:
+def test_every_candidate_of_an_old_enough_release_is_selected_with_its_rolling_tag() -> (
+    None
+):
     chosen = sel.select_candidates(TAGS, NOW)
     assert "0.6.0-rc1_20260820000000" in chosen, "the final is newer than every build"
-    assert "0.6.0-rc1" in chosen, "selected with its builds, so prune sees no shared version"
+    assert "0.6.0-rc1" in chosen, (
+        "selected with its builds, so prune sees no shared version"
+    )
     assert "0.6.0-rc2_20260825000000" in chosen, "a line of one build is selected too"
     assert "0.6.0-rc1_20260801000000" in chosen
 
@@ -86,7 +105,9 @@ def test_main_reads_stdin_and_rejects_negative_days(
 ) -> None:
     import io
 
-    monkeypatch.setattr("sys.stdin", io.StringIO("0.7.0-dev_20260101000000\n"))
+    monkeypatch.setattr(
+        "sys.stdin", io.StringIO("0.7.0-dev_20260101000000\n0.7.0-dev_20260102000000\n")
+    )
     assert sel.main(["dev", "--days", "0", "--now", "2026-11-13T12:00:00+00:00"]) == 0
     assert capsys.readouterr().out.strip() == "0.7.0-dev_20260101000000"
     assert sel.main(["dev", "--days", "-1"]) == 64
@@ -122,5 +143,51 @@ def test_dev_selection_is_newline_terminated_without_a_blank_line(
 def test_candidate_selection_is_newline_terminated_without_a_blank_line(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    out = _run(monkeypatch, capsys, "candidates", ["0.6.0-rc1_20260801000000", "0.6.0_20260901000000"])
+    out = _run(
+        monkeypatch,
+        capsys,
+        "candidates",
+        ["0.6.0-rc1_20260801000000", "0.6.0_20260901000000"],
+    )
     assert out == "0.6.0-rc1_20260801000000\n"
+
+
+def test_a_garbage_now_is_a_usage_error_with_one_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import io
+
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    assert sel.main(["dev", "--days", "1", "--now", "garbage"]) == 64
+    err = capsys.readouterr().err
+    assert err.startswith("release_prune_select:") and len(err.splitlines()) == 1
+
+
+def test_a_naive_now_is_read_as_utc_whatever_the_local_zone(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import io
+    import time
+
+    monkeypatch.setenv("TZ", "Pacific/Kiritimati")  # UTC+14
+    time.tzset()
+    try:
+        # Cutoff 2026-11-13T00:00Z: both 2026-11-12 builds are older.
+        tags = "0.7.0-dev_20261112000000\n0.7.0-dev_20261112120000\n0.7.0-dev_20261114000000\n"
+        monkeypatch.setattr("sys.stdin", io.StringIO(tags))
+        assert sel.main(["dev", "--days", "0", "--now", "2026-11-13T00:00:00"]) == 0
+        assert (
+            capsys.readouterr().out
+            == "0.7.0-dev_20261112000000\n0.7.0-dev_20261112120000\n"
+        )
+    finally:
+        monkeypatch.delenv("TZ")
+        time.tzset()
+
+
+def test_non_ascii_digits_are_not_a_build_stamp() -> None:
+    arabic = "٠.٦.٠"
+    assert sel.DEV_BUILD.match("0.7.0-dev_٢٠٢٦١١١٢٠٠٠٠٠٠") is None
+    assert sel.DEV_BUILD.match(f"{arabic}-dev_20200101000000") is None
+    assert sel.RELEASE_BUILD.match(f"{arabic}_20200101000000") is None
+    assert sel.CANDIDATE.match(f"{arabic}-rc1") is None

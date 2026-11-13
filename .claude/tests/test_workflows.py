@@ -3734,6 +3734,10 @@ def _run_plan(script: str, tmp: Path, **env: str) -> tuple[int, dict[str, str]]:
         cliff = tmp / "bin" / "git-cliff"
         cliff.write_text("#!/bin/sh\necho v0.10.0\n", encoding="utf-8")
         cliff.chmod(0o755)
+        # The step reaches git-cliff through the pinned toolchain: this `ocx` accepts only that spelling.
+        ocx = tmp / "bin" / "ocx"
+        ocx.write_text('#!/bin/sh\n[ "$1 $2 $3 $4" = "exec -g release --" ] || exit 64\nshift 4\nexec "$@"\n', encoding="utf-8")
+        ocx.chmod(0o755)
     output = tmp / "out"
     output.write_text("", encoding="utf-8")
     (tmp / "plan.sh").write_text(script, encoding="utf-8")

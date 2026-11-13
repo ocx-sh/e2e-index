@@ -1969,17 +1969,17 @@ fn leaf_request(tag: &str) -> Vec<Option<AliasTag>> {
     ))]
 }
 
-fn announce_names(observation: &TagGraphObservation, request: &[Option<AliasTag>]) -> Option<Vec<String>> {
-    let scope = announce_scope(&observation.versions(), &fold_expected(observation), request)?;
-    Some(
+fn announce_names(observation: &TagGraphObservation, request: &[Option<AliasTag>]) -> Vec<String> {
+    let scope = announce_scope(&observation.versions(), &fold_expected(observation), request);
+    {
         scope
             .iter()
             .map(|alias| match alias {
                 AliasTag::Version(version) => version.to_string(),
                 AliasTag::Root { .. } => "latest".to_string(),
             })
-            .collect(),
-    )
+            .collect()
+    }
 }
 
 #[test]
@@ -1990,7 +1990,7 @@ fn a_prerelease_build_tag_owns_only_its_parent_prerelease() {
         .build();
     assert_eq!(
         announce_names(&observation, &leaf_request("1.1.0-beta_b1")),
-        Some(vec!["1.1.0-beta".to_string()])
+        vec!["1.1.0-beta".to_string()]
     );
 }
 
@@ -2002,15 +2002,15 @@ fn a_release_build_tag_owns_no_alias_a_newer_release_took() {
         .build();
     assert_eq!(
         announce_names(&observation, &leaf_request("1.0.1_b1")),
-        Some(vec!["1.0.1".to_string(), "1.0".to_string()])
+        vec!["1.0.1".to_string(), "1.0".to_string()]
     );
 }
 
 #[test]
-fn a_request_that_is_not_a_leaf_leaves_the_scope_unbounded() {
+fn a_request_that_is_not_a_leaf_owns_no_alias() {
     let observation = Graph::new()
         .index("1.0.1_b1", vec![entry("linux/amd64", "old")])
         .build();
-    assert_eq!(announce_names(&observation, &leaf_request("1.0")), None);
-    assert_eq!(announce_names(&observation, &[None]), None);
+    assert!(announce_names(&observation, &leaf_request("1.0")).is_empty());
+    assert!(announce_names(&observation, &[None]).is_empty());
 }

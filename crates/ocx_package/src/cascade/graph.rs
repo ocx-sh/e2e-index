@@ -766,30 +766,28 @@ pub fn scope_filter(
     Ok(scope)
 }
 
-/// The aliases a repair of `requests` may announce: those whose expected content folds from a requested
-/// leaf, so a retry lists the rolling tags the build tag owns and never an ancestor it does not write
-/// (a prerelease's stable parents, an alias a newer release took over). `None` when any request is
-/// not a leaf version, since an alias or whole-graph request owns its whole scope.
+/// The aliases a repair of `requests` may announce although it wrote nothing: those whose expected
+/// content folds from a requested leaf, so a retry lists the rolling tags the build tag owns and never
+/// an ancestor it does not write (a prerelease's stable parents, an alias a newer release took over).
+/// An alias or whole-graph request names no leaf and owns none.
 pub fn announce_scope(
     versions: &BTreeSet<Version>,
     expected: &ExpectedGraph,
     requests: &[Option<AliasTag>],
-) -> Option<BTreeSet<AliasTag>> {
+) -> BTreeSet<AliasTag> {
     let leaves = leaves(versions);
-    let mut wanted = Vec::new();
-    for request in requests {
-        match request {
-            Some(AliasTag::Version(version)) if leaves.contains(&version) => wanted.push(version),
-            _ => return None,
-        }
-    }
-    Some(
-        expected
-            .iter()
-            .filter(|(_, slots)| slots.values().any(|slot| wanted.contains(&&slot.source)))
-            .map(|(alias, _)| alias.clone())
-            .collect(),
-    )
+    let wanted: Vec<&Version> = requests
+        .iter()
+        .filter_map(|request| match request {
+            Some(AliasTag::Version(version)) => leaves.iter().find(|leaf| ***leaf == *version).copied(),
+            _ => None,
+        })
+        .collect();
+    expected
+        .iter()
+        .filter(|(_, slots)| slots.values().any(|slot| wanted.contains(&&slot.source)))
+        .map(|(alias, _)| alias.clone())
+        .collect()
 }
 
 /// Whether `alias` sits under `ancestor` in the version trie.

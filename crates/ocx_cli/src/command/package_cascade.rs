@@ -42,8 +42,8 @@ pub struct PackageAudit {
     pub observation: graph::TagGraphObservation,
     pub expected: graph::ExpectedGraph,
     pub report: graph::CascadeReport,
-    /// The aliases a repair may announce; `None` leaves the whole scope announceable.
-    pub announce_scope: Option<std::collections::BTreeSet<graph::AliasTag>>,
+    /// The aliases a repair may announce though it wrote nothing: the requested build tags' write set.
+    pub announce_scope: std::collections::BTreeSet<graph::AliasTag>,
     /// True when a claiming index source serves no root yet, so empty `index_findings`
     /// means "not compared" rather than "agrees".
     pub index_layer_skipped: bool,

@@ -21,10 +21,15 @@ Every root lists the tags `main`, `tag`, `other`, `key`, `unsigned` and `two-sbo
 Run it only after the `e2e-package` tags are published. `--dry-run` writes fixture digests with no network access.
 `python3 scripts/test_build_index.py` checks the dry-run output.
 
-## GitHub Pages
+## Site
 
-Static site, no Jekyll (`docs/.nojekyll`). Pages source: branch `main`, folder `/docs`. The index URL is
-`https://ocx-sh.github.io/e2e-index`.
+`.github/workflows/pages.yml` renders `docs/` with the `ocx-catalog` renderer and publishes it through Pages.
+The wire files keep their bytes and URLs; the index URL is `https://ocx-sh.github.io/e2e-index`.
+
+## Testing by hand
+
+[TESTING.md](TESTING.md) has the setup, the expected exit code of every root and tag, and the SBOM and
+attestation commands. Each package page of the site shows the same text.
 
 ## client-e2e
 

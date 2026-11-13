@@ -35,7 +35,7 @@ use crate::sign::bundle::{MAX_BUNDLE_SIZE_BYTES, parse_bundle};
 use crate::sign::state::SigningStatePaths;
 use ocx_oci::client::error::ClientError;
 use ocx_oci::client::{Client, OciTransport, ReferrersListing, sibling_tag_reference};
-use ocx_oci::media_type::SIGNABLE_MANIFEST_TYPES;
+use ocx_oci::media_type::{SIGNABLE_MANIFEST_TYPES, SUBJECT_MANIFEST_TYPES};
 use ocx_oci::referrer::media_types::{
     ANNOTATION_BUNDLE_CONTENT, ANNOTATION_BUNDLE_PREDICATE_TYPE, BUNDLE_CONTENT_DSSE, COSIGN_SBOM_ARTIFACT_TYPE,
     COSIGN_SIG_ARTIFACT_TYPE, SIGSTORE_BUNDLE_V03,
@@ -2194,7 +2194,7 @@ async fn pull_subject_manifest_verified(
     // Digest-addressed, not whatever the tag points at now.
     let pinned = image.clone_with_digest(subject_digest.to_string());
     let (bytes, _) = transport
-        .pull_manifest_raw(&pinned, SIGNABLE_MANIFEST_TYPES)
+        .pull_manifest_raw(&pinned, SUBJECT_MANIFEST_TYPES)
         .await
         .map_err(map_client_error)?;
     // No size cap: the body is already allocated, so a cap would refuse only a genuine oversized manifest.

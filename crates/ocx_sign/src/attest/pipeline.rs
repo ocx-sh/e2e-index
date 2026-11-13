@@ -20,7 +20,7 @@ use crate::sign::state::SigningStatePaths;
 use crate::sign::{SignError, SignErrorKind, SignatureFormat, Signer, TokenProvider};
 use ocx_oci::client::error::ClientError;
 use ocx_oci::client::{Client, OciTransport};
-use ocx_oci::media_type::SIGNABLE_MANIFEST_TYPES;
+use ocx_oci::media_type::{SUBJECT_MANIFEST_TYPES, manifest_media_type};
 use ocx_oci::referrer::ReferrerManifest;
 use ocx_oci::referrer::capability::ReferrersSupport;
 use ocx_oci::referrer::manifest::{bundle_annotations, bundle_created, bundle_now};
@@ -29,7 +29,7 @@ use ocx_oci::referrer::media_types::{
 };
 use ocx_oci::resolve_target::{ResolvedSubject, SignTarget};
 use ocx_oci::ssrf::DialPolicy;
-use ocx_oci::{Algorithm, Descriptor, Digest, OCI_IMAGE_MEDIA_TYPE, PackageRef, Platform, native};
+use ocx_oci::{Algorithm, Descriptor, Digest, PackageRef, Platform, native};
 
 /// Whether the attach publishes a signed bundle or the raw document.
 ///
@@ -184,7 +184,7 @@ impl AttestPipeline {
         // Digest-only: a `repo:tag@digest` reference keys a different registry path and 404s.
         let subject_ref = read_image.clone_with_digest(subject_digest.to_string());
         let (subject_bytes, served_digest) = transport
-            .pull_manifest_raw(&subject_ref, SIGNABLE_MANIFEST_TYPES)
+            .pull_manifest_raw(&subject_ref, SUBJECT_MANIFEST_TYPES)
             .await
             .map_err(map_client_error)?;
         // Bind the mirror-served bytes to the resolved digest, or a wrong `size` yields an attestation strict verifiers reject.
@@ -200,7 +200,7 @@ impl AttestPipeline {
             referrers_capability(transport, &write_image, &subject_digest, &ctx.state, ctx.no_cache).await?;
 
         let subject_descriptor = Descriptor {
-            media_type: OCI_IMAGE_MEDIA_TYPE.to_string(),
+            media_type: manifest_media_type(&subject_bytes),
             digest: subject_digest.to_string(),
             size: subject_bytes.len() as i64,
             ..Descriptor::default()

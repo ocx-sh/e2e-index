@@ -22,7 +22,7 @@ use crate::sign::state::SigningStatePaths;
 use crate::simplesigning::SimpleSigningClaim;
 use ocx_oci::client::error::ClientError;
 use ocx_oci::client::{Client, OciTransport};
-use ocx_oci::media_type::SIGNABLE_MANIFEST_TYPES;
+use ocx_oci::media_type::{SUBJECT_MANIFEST_TYPES, manifest_media_type};
 use ocx_oci::referrer::ReferrerManifest;
 use ocx_oci::referrer::manifest::{bundle_annotations, bundle_created, bundle_now};
 use ocx_oci::referrer::media_types::{
@@ -30,7 +30,7 @@ use ocx_oci::referrer::media_types::{
 };
 use ocx_oci::resolve_target::{ResolveTargetError, ResolvedSubject, SignTarget};
 use ocx_oci::ssrf::DialPolicy;
-use ocx_oci::{Descriptor, Digest, OCI_IMAGE_MEDIA_TYPE, PackageRef, Platform, native};
+use ocx_oci::{Descriptor, Digest, PackageRef, Platform, native};
 
 /// A caller-supplied subject resolution, shared by the sign and attest pipelines.
 ///
@@ -252,7 +252,7 @@ impl SignPipeline {
         // Digest-only: a `repo:tag@digest` reference keys a different registry path and 404s.
         let subject_ref = read_image.clone_with_digest(subject_digest.to_string());
         let (subject_bytes, served_digest) = transport
-            .pull_manifest_raw(&subject_ref, SIGNABLE_MANIFEST_TYPES)
+            .pull_manifest_raw(&subject_ref, SUBJECT_MANIFEST_TYPES)
             .await
             .map_err(map_client_error)?;
         // Bind the mirror-served bytes to the resolved digest, or a wrong `size` yields a signature strict verifiers reject.
@@ -274,7 +274,7 @@ impl SignPipeline {
 
         // Best-effort per leg: hiding a landed leg behind the other's failure leaves the operator re-signing it.
         let subject_descriptor = Descriptor {
-            media_type: OCI_IMAGE_MEDIA_TYPE.to_string(),
+            media_type: manifest_media_type(&subject_bytes),
             digest: subject_digest.to_string(),
             size: subject_bytes.len() as i64,
             ..Descriptor::default()
@@ -487,7 +487,7 @@ mod platform_narrowing_tests {
     //! own suite, so each row below drives the seam end to end.
 
     use super::*;
-    use ocx_oci::{INDEX_SCHEMA_VERSION, ImageIndex, ImageIndexEntry, ImageManifest};
+    use ocx_oci::{INDEX_SCHEMA_VERSION, ImageIndex, ImageIndexEntry, ImageManifest, OCI_IMAGE_MEDIA_TYPE};
 
     fn digest(byte: u8) -> Digest {
         Digest::Sha256(format!("{byte:064x}"))
@@ -684,6 +684,7 @@ mod platform_narrowing_tests {
 mod tests {
     use super::*;
 
+    use ocx_oci::OCI_IMAGE_MEDIA_TYPE;
     use ocx_oci::native;
     use ocx_oci::referrer::capability::ReferrersApiCapability;
     use ocx_oci::testing::RecordingTransport;

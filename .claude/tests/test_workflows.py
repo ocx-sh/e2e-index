@@ -3913,6 +3913,74 @@ def test_the_tag_sweep_reds_a_release_before_signing_a_stray_tag_and_an_early_an
     assert _tag_findings(_mutated("release.yml", old, new))
 
 
+_UNPINNED_CLIFF = re.compile(r"(?<!ocx exec -g release -- )\bgit-cliff\b")
+
+
+def _release_tool_findings(documents: list[tuple[str, dict]]) -> list[str]:
+    """In `release.yml` and `backfill.yml`, git-cliff runs only as the pinned `release` group tool.
+
+    `taiki-e/install-action` without a version runs the latest upstream binary, in jobs that hold
+    `contents: write` or a registry token.
+    """
+    findings, cliff_calls = [], 0
+    for where, _, job in _jobs([d for d in documents if d[0] in ("release.yml", "backfill.yml")]):
+        for step in job.get("steps") or []:
+            if str(step.get("uses", "")).startswith("taiki-e/install-action"):
+                findings.append(f"{where} installs a tool with taiki-e/install-action instead of `ocx exec`")
+        runs = "\n".join(line for line in _job_runs(job).splitlines() if "echo" not in line)
+        cliff_calls += runs.count("git-cliff")
+        findings += [f"{where} runs git-cliff outside `ocx exec -g release --`" for _ in _UNPINNED_CLIFF.finditer(runs)]
+    if cliff_calls < 2:
+        findings.append(f"{cliff_calls} git-cliff calls found, expected 2 (the reader stopped matching)")
+    return findings
+
+
+def test_release_tools_come_from_the_pinned_toolchain_never_a_floating_install() -> None:
+    assert _release_tool_findings(_documents()) == []
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        pytest.param("      - name: Setup OCX\n        uses: ocx-sh/setup-ocx@25fa771f8572572dc64528db89560de68a163a0e # v1.4.0\n        with:\n          version: '0.6.2'\n          cache: false\n      - name: Download the release assets", "      - name: Install git-cliff\n        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29\n        with:\n          tool: git-cliff\n      - name: Download the release assets", id="floating-install-in-the-release-job"),
+        pytest.param("ocx exec -g release -- git-cliff --unreleased", "git-cliff --unreleased", id="bare-git-cliff"),
+    ],
+)
+def test_the_release_tool_sweep_reds_a_floating_install_and_a_bare_git_cliff(old: str, new: str) -> None:
+    assert _release_tool_findings(_mutated("release.yml", old, new))
+
+
+_PRERELEASE_BRANCH = re.compile(
+    r'if \[\[ "\$MODE" == candidate \]\]; then\n\s*args\+=\(--prerelease\)\n\s*else\n\s*args\+=\(--latest\)\n\s*fi'
+)
+
+
+def _prerelease_findings(documents: list[tuple[str, dict]]) -> list[str]:
+    """`--prerelease` is passed exactly in candidate mode; release mode passes `--latest` instead."""
+    jobs = {where: job for where, _, job in _jobs(documents)}
+    runs = _job_runs(jobs["release.yml:github-release"])
+    findings = []
+    if runs.count("--prerelease") != 1 or not _PRERELEASE_BRANCH.search(runs):
+        findings.append("github-release does not pass --prerelease exactly in the candidate branch")
+    return findings
+
+
+def test_a_candidate_release_is_a_prerelease_and_a_release_is_not() -> None:
+    assert _prerelease_findings(_documents()) == []
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        pytest.param('if [[ "$MODE" == candidate ]]; then\n            args+=(--prerelease)', 'if [[ "$MODE" == release ]]; then\n            args+=(--prerelease)', id="release-mode-is-prerelease"),
+        pytest.param("args+=(--prerelease)", "args+=(--draft)", id="candidate-is-not-prerelease"),
+        pytest.param("          else\n            args+=(--latest)", "          else\n            args+=(--latest --prerelease)", id="both-branches"),
+    ],
+)
+def test_the_prerelease_sweep_reds_each_way_the_flag_can_move(old: str, new: str) -> None:
+    assert _prerelease_findings(_mutated("release.yml", old, new))
+
+
 def _platform_loop_findings(documents: list[tuple[str, dict]]) -> list[str]:
     """Every step looping over `$PLATFORMS` reads the rows on fd 3 and asserts it covered every row."""
     findings, loops = [], 0

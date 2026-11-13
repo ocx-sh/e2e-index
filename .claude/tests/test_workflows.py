@@ -3913,6 +3913,47 @@ def test_the_tag_sweep_reds_a_release_before_signing_a_stray_tag_and_an_early_an
     assert _tag_findings(_mutated("release.yml", old, new))
 
 
+def _platform_loop_findings(documents: list[tuple[str, dict]]) -> list[str]:
+    """Every step looping over `$PLATFORMS` reads the rows on fd 3 and asserts it covered every row."""
+    findings, loops = [], 0
+    for where, _, job in _jobs(documents):
+        for step in job.get("steps") or []:
+            run = "\n".join(line for line in str(step.get("run", "")).splitlines() if not line.lstrip().startswith("#"))
+            if 'done <<< "$PLATFORMS"' not in run and 'done 3<<< "$PLATFORMS"' not in run:
+                continue
+            loops += 1
+            at = f"{where} step {step.get('name')!r}"
+            if 'done 3<<< "$PLATFORMS"' not in run or "<&3" not in run:
+                findings.append(f"{at} reads the platform rows on stdin, where a command in the body can swallow them")
+            if 'expected="$(grep -c . <<< "$PLATFORMS")"' not in run or not re.search(r"\(\(\w+ != expected\)\)", run):
+                findings.append(f"{at} never compares the platforms it covered with the platforms published")
+    if loops != 2:
+        findings.append(f"{loops} `$PLATFORMS` loops found, expected 2 (the reader stopped matching)")
+    return findings
+
+
+def test_the_platform_loops_cannot_silently_cover_fewer_platforms() -> None:
+    assert _platform_loop_findings(_documents()) == []
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        pytest.param('done 3<<< "$PLATFORMS"', 'done <<< "$PLATFORMS"', id="rows-on-stdin"),
+        pytest.param("while read -r asset platform <&3; do", "while read -r asset platform; do", id="loop-reads-stdin", ),
+        pytest.param("if ((published != expected)); then", "if false; then", id="no-count-check"),
+    ],
+)
+def test_the_platform_loop_sweep_reds_a_stdin_loop_and_a_missing_count(old: str, new: str) -> None:
+    assert _platform_loop_findings(_mutated("release.yml", old, new))
+
+
+def test_a_release_and_a_candidate_share_one_concurrency_group_and_a_dev_build_has_its_own() -> None:
+    group = str(dict(_documents())["release.yml"]["concurrency"]["group"])
+    assert "inputs.mode == 'dev'" in group, f"release.yml concurrency group {group!r} does not separate dev from release/candidate"
+    assert "inputs.mode }}" not in group, f"release.yml concurrency group {group!r} is keyed by the raw mode"
+
+
 def _cross_targets() -> list[str]:
     return yaml.safe_load(CROSS_TASKFILE.read_text(encoding="utf-8"))["vars"]["TARGETS"].split()
 

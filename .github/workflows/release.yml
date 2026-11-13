@@ -458,7 +458,7 @@ jobs:
           set -euo pipefail
           ocx --remote --format json index list "$PACKAGE" | jq -r '.items[].tags[]?' > "$RUNNER_TEMP/tags.txt"
           python3 scripts/release_prune_select.py dev --days "$DAYS" < "$RUNNER_TEMP/tags.txt" > "$RUNNER_TEMP/selected.txt"
-          mapfile -t selected < "$RUNNER_TEMP/selected.txt"
+          mapfile -t selected < <(grep . "$RUNNER_TEMP/selected.txt" || true)
           if ((${#selected[@]} == 0)); then
             echo "No dev build of $PACKAGE is older than $DAYS days."
             exit 0
@@ -493,7 +493,7 @@ jobs:
           set -euo pipefail
           ocx --remote --format json index list "$PACKAGE_RELEASE" | jq -r '.items[].tags[]?' > "$RUNNER_TEMP/tags.txt"
           python3 scripts/release_prune_select.py candidates --days "$DAYS" < "$RUNNER_TEMP/tags.txt" > "$RUNNER_TEMP/selected.txt"
-          mapfile -t selected < "$RUNNER_TEMP/selected.txt"
+          mapfile -t selected < <(grep . "$RUNNER_TEMP/selected.txt" || true)
           if ((${#selected[@]} == 0)); then
             echo "No candidate of a release older than $DAYS days."
             exit 0

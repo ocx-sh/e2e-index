@@ -90,3 +90,37 @@ def test_main_reads_stdin_and_rejects_negative_days(
     assert sel.main(["dev", "--days", "0", "--now", "2026-11-13T12:00:00+00:00"]) == 0
     assert capsys.readouterr().out.strip() == "0.7.0-dev_20260101000000"
     assert sel.main(["dev", "--days", "-1"]) == 64
+
+
+def _run(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    kind: str,
+    tags: list[str],
+) -> str:
+    import io
+
+    monkeypatch.setattr("sys.stdin", io.StringIO("".join(f"{t}\n" for t in tags)))
+    assert sel.main([kind, "--days", "30", "--now", NOW.isoformat()]) == 0
+    return capsys.readouterr().out
+
+
+@pytest.mark.parametrize("kind", ["dev", "candidates"])
+def test_an_empty_selection_writes_zero_bytes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], kind: str
+) -> None:
+    # A blank line would reach `mapfile -t` in release.yml as one empty tag argument to `ocx package prune`.
+    assert _run(monkeypatch, capsys, kind, ["0.7.0-dev_20261112000000", "latest"]) == ""
+
+
+def test_dev_selection_is_newline_terminated_without_a_blank_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _run(monkeypatch, capsys, "dev", TAGS) == "0.7.0-dev_20260101000000\n"
+
+
+def test_candidate_selection_is_newline_terminated_without_a_blank_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out = _run(monkeypatch, capsys, "candidates", ["0.6.0-rc1_20260801000000", "0.6.0_20260901000000"])
+    assert out == "0.6.0-rc1_20260801000000\n"

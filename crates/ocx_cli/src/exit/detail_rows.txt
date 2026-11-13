@@ -379,6 +379,7 @@ project_toml_invalid	ConfigError	ocx.toml or ocx.lock is not valid TOML of the e
 project_toml_serialize	ConfigError	A project file could not be serialized
 provenance_version_unsupported	UsageError	The provenance predicate type is older than SLSA v1.0
 prune_digest_tag	UsageError	A digest was given where prune takes a tag
+prune_index_stale	TempFail	The index row for a tag names a different build than the registry serves
 prune_no_index	PolicyBlocked	No index is configured to check the tags against
 prune_not_a_prerelease	UsageError	The --prerelease value is not a pre-release without a build
 prune_package_not_bare	UsageError	The package argument carries a tag or digest

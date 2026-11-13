@@ -2029,6 +2029,11 @@
           "exit_code": 64
         },
         {
+          "value": "prune_index_stale",
+          "description": "The index row for a tag names a different build than the registry serves",
+          "exit_code": 75
+        },
+        {
           "value": "prune_no_index",
           "description": "No index is configured to check the tags against",
           "exit_code": 81

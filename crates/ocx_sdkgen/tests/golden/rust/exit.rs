@@ -399,6 +399,7 @@ impl ErrorDetail {
             Self::ProjectTomlSerialize => Some(ExitCode::ConfigError),
             Self::ProvenanceVersionUnsupported => Some(ExitCode::UsageError),
             Self::PruneDigestTag => Some(ExitCode::UsageError),
+            Self::PruneIndexStale => Some(ExitCode::TempFail),
             Self::PruneNoIndex => Some(ExitCode::PolicyBlocked),
             Self::PruneNotAPrerelease => Some(ExitCode::UsageError),
             Self::PrunePackageNotBare => Some(ExitCode::UsageError),

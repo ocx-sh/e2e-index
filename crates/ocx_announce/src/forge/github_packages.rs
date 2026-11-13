@@ -223,6 +223,7 @@ impl TagDeleter for GithubPackagesDeleter<'_> {
 
         let set = self.delete_set(repository, &plan.tags, &versions, &roots).await?;
         refuse_shared(repository, &plan.tags, &set)?;
+        refuse_stale_rows(repository, plan, &found, &versions)?;
 
         if plan.dry_run {
             for version in &set {
@@ -378,6 +379,35 @@ fn listing_unchanged(set: &[&Version], requested: &[String], fresh: &[Version]) 
         .filter(|now| now.tags.iter().any(|tag| requested.contains(tag)))
         .all(|now| set.iter().any(|member| member.id == now.id));
     members_hold && tags_stay
+}
+
+/// Refuses when the version carrying a tag is not the digest the index row for that tag names: the row is
+/// stale, and the delete would remove a different build than the one the index vouched for.
+#[expect(
+    clippy::result_large_err,
+    reason = "refusals are cold and the error is the shared PruneError; boxing would only allocate on the refusal path"
+)]
+fn refuse_stale_rows(
+    repository: &OciIdentifier,
+    plan: &DeletePlan,
+    found: &[(&String, u64)],
+    versions: &[Version],
+) -> Result<(), PruneError> {
+    for (tag, indexed) in &plan.indexed {
+        let served = found
+            .iter()
+            .find(|(found_tag, _)| *found_tag == tag)
+            .and_then(|(_, id)| versions.iter().find(|version| version.id == *id));
+        if let Some(served) = served.filter(|version| version.digest != indexed.to_string()) {
+            return Err(PruneError::IndexStale {
+                repository: repository.to_string(),
+                tag: tag.clone(),
+                indexed: indexed.to_string(),
+                served: served.digest.clone(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Adds `version` unless the set holds it; whether it was added.
@@ -642,6 +672,7 @@ mod tests {
         DeletePlan {
             repository: repository(),
             tags: tags.iter().map(ToString::to_string).collect(),
+            indexed: Vec::new(),
             dry_run,
         }
     }
@@ -1278,6 +1309,55 @@ mod tests {
         let mut report = DeleteReport::default();
         deleter(&client, &fake.base)
             .delete(&plan(&["old"], false), &mut report)
+            .await
+            .expect("deleted");
+
+        assert_eq!(report.deleted, ["old"]);
+    }
+
+    #[tokio::test]
+    async fn an_index_row_naming_another_build_than_the_tag_carries_refuses_before_any_delete() {
+        let (index_bytes, index_digest) = index(&[]);
+        let data = StubTransportData::new();
+        serve(&data, &index_digest, index_bytes);
+        let client = stub_client(&data);
+        let fake = Fake::start(route("Organization", vec![version(7, &index_digest, &["old"])])).await;
+        let row = Digest::try_from(digest("the row").as_str()).expect("a digest");
+        let mut stale = plan(&["old"], false);
+        stale.indexed = vec![("old".to_owned(), row)];
+
+        let mut report = DeleteReport::default();
+        let error = deleter(&client, &fake.base)
+            .delete(&stale, &mut report)
+            .await
+            .expect_err("a stale row");
+
+        match error {
+            PruneError::IndexStale { tag, served, .. } => {
+                assert_eq!((tag.as_str(), served.as_str()), ("old", index_digest.as_str()));
+            }
+            other => panic!("expected IndexStale, got {other:?}"),
+        }
+        assert!(fake.deletes().is_empty(), "{:?}", fake.requests());
+    }
+
+    #[tokio::test]
+    async fn an_index_row_naming_the_served_build_deletes() {
+        let (index_bytes, index_digest) = index(&[]);
+        let data = StubTransportData::new();
+        serve(&data, &index_digest, index_bytes);
+        confirm_all_gone(&data, 1);
+        let client = stub_client(&data);
+        let fake = Fake::start(route("Organization", vec![version(7, &index_digest, &["old"])])).await;
+        let mut matching = plan(&["old"], false);
+        matching.indexed = vec![(
+            "old".to_owned(),
+            Digest::try_from(index_digest.as_str()).expect("a digest"),
+        )];
+
+        let mut report = DeleteReport::default();
+        deleter(&client, &fake.base)
+            .delete(&matching, &mut report)
             .await
             .expect("deleted");
 

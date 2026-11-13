@@ -327,6 +327,22 @@ pub enum PruneError {
         other_tag: String,
     },
 
+    /// A forge deleter found a different build under a tag than the index row for it names.
+    #[error(
+        "refusing to delete {tag} from {repository}: the index lists it as {indexed} but the registry serves {served}; nothing was deleted; resync the index and retry"
+    )]
+    #[exit(
+        TempFail,
+        slug = "prune_index_stale",
+        summary = "The index row for a tag names a different build than the registry serves"
+    )]
+    IndexStale {
+        repository: String,
+        tag: String,
+        indexed: String,
+        served: String,
+    },
+
     /// A deleted tag was still served after every confirmation GET.
     #[error("{tag} is still present in {repository} after its delete; retry")]
     #[exit(
@@ -541,6 +557,9 @@ pub struct DeletePlan {
     pub repository: OciIdentifier,
     /// Tags to delete, in the order given.
     pub tags: Vec<String>,
+    /// The digest the index row of a tag names, for each tag that has a row. A deleter that removes
+    /// a build rather than a tag refuses when the registry serves another one.
+    pub indexed: Vec<(String, Digest)>,
     /// Report what would be deleted and delete nothing.
     pub dry_run: bool,
 }
@@ -677,6 +696,14 @@ async fn run(
         tags: positions
             .iter()
             .map(|&position| outcome.tags[position].tag.clone())
+            .collect(),
+        indexed: positions
+            .iter()
+            .filter_map(|&position| {
+                let row = &outcome.tags[position];
+                row.in_root
+                    .then(|| row.digest.clone().map(|digest| (row.tag.clone(), digest)))?
+            })
             .collect(),
         dry_run: request.dry_run,
     };

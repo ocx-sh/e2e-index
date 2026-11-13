@@ -3572,6 +3572,8 @@ pub enum ErrorDetail {
     ProvenanceVersionUnsupported,
     /// A digest was given where prune takes a tag
     PruneDigestTag,
+    /// The index row for a tag names a different build than the registry serves
+    PruneIndexStale,
     /// No index is configured to check the tags against
     PruneNoIndex,
     /// The --prerelease value is not a pre-release without a build
@@ -4270,6 +4272,7 @@ impl ErrorDetail {
             Self::ProjectTomlSerialize => "project_toml_serialize",
             Self::ProvenanceVersionUnsupported => "provenance_version_unsupported",
             Self::PruneDigestTag => "prune_digest_tag",
+            Self::PruneIndexStale => "prune_index_stale",
             Self::PruneNoIndex => "prune_no_index",
             Self::PruneNotAPrerelease => "prune_not_a_prerelease",
             Self::PrunePackageNotBare => "prune_package_not_bare",
@@ -4801,6 +4804,7 @@ impl ErrorDetail {
             "project_toml_serialize" => Self::ProjectTomlSerialize,
             "provenance_version_unsupported" => Self::ProvenanceVersionUnsupported,
             "prune_digest_tag" => Self::PruneDigestTag,
+            "prune_index_stale" => Self::PruneIndexStale,
             "prune_no_index" => Self::PruneNoIndex,
             "prune_not_a_prerelease" => Self::PruneNotAPrerelease,
             "prune_package_not_bare" => Self::PrunePackageNotBare,

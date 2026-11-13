@@ -745,7 +745,7 @@ mod tests {
     #[tokio::test]
     async fn attesting_refuses_a_subject_that_is_not_json() {
         let run = attest_subject(b"not a manifest").await;
-        let error = run.result.err().expect("an unreadable subject must be refused");
+        let error = run.result.expect_err("an unreadable subject must be refused");
         assert!(
             matches!(&error.kind, SignErrorKind::Internal(inner)
                 if matches!(inner.downcast_ref::<ClientError>(), Some(ClientError::InvalidManifest(_)))),
@@ -757,7 +757,7 @@ mod tests {
     #[tokio::test]
     async fn attesting_refuses_a_subject_declaring_a_media_type_outside_the_signable_list() {
         let run = attest_subject(br#"{"schemaVersion":2,"mediaType":"application/vnd.example.other+json"}"#).await;
-        let error = run.result.err().expect("an unsignable declared type must be refused");
+        let error = run.result.expect_err("an unsignable declared type must be refused");
         assert!(
             matches!(&error.kind, SignErrorKind::Internal(inner)
                 if matches!(inner.downcast_ref::<ClientError>(), Some(ClientError::InvalidManifest(_)))),

@@ -7,11 +7,11 @@
 - **Tier:** high
 - **Tier-grammar:** 5
 - **Updated:** 2026-11-13
-- **Active phase:** 3 — wave 3 (P-FIX, P-DOCS); waves 0–2 merged
-- **Step:** /hex-execute → wave 3 pipelines
+- **Active phase:** 4 — I1b (fixture proof loop); I1a done
+- **Step:** /hex-execute → awaiting META M-1 (I1b)
 - **Feature branch:** `hex/signing-dogfood` (ocx); `hex/signing-dogfood` in `.agents/worktrees/sat-ocx-mirror-release` (ocx-mirror, from its `origin/main`)
-- **Last update:** 2026-11-13 (/hex-execute started on e02bf76b3; scope this run: A0, waves 1–3, I1a)
-- **Next:** /hex-execute .claude/artifacts/plan_signing_dogfood.md
+- **Last update:** 2026-11-13 (I1a done on abe52112b; fixture clones carry local commits: e2e-package `dc5849a`,`7de9fda`; e2e-index `3861b81`,`d084989`)
+- **Next:** META M-1…M-8 (§ META steps), then `/hex-execute .claude/artifacts/plan_signing_dogfood.md` resumes at I1b; closing integration gate + review not yet run
 
 ---
 
@@ -106,6 +106,9 @@ The discussion's eight open questions (D-1…D-8) take the recommended answer un
 - **D-26 Backfill pins digests, not release-asset hashes** (P-WF review question). **Decision:** backfill resolves each platform's digest once and verifies/signs/attests `ref@<digest>`, printing it; it does not cross-check GitHub release asset hashes (OCI digest is the signed subject; the asset set is a separate artifact).
 
 - **D-27 Candidate "line" for retention** (P-WF question). **Decision:** a candidate's line is its final release `X.Y.Z`; once `X.Y.Z` exists and is at least `prune_after_days` old it is the newest build of the line, so every `X.Y.Z-rcN_<ts>` build tag and rolling `X.Y.Z-rcN` tag is selected together (avoids `prune_shared_version`); nothing of a line is selected before that. Implemented in `scripts/release_prune_select.py`.
+
+- **D-28 e2e-index wire tree at the repository root** (P-FIX). Question: `ocx package announce` reads the committed root at `p/<pkg>.json` (plus `config.json`, `c/`) at the index repository root, as in `ocx-sh/index`; e2e-index served them from `docs/`. **Decision:** e2e-index moves to the production layout (`git mv`, e2e-index `d084989`); Pages assembles its site from the root files; served URLs unchanged. META commits of `index-out` artifacts land at the root (`p/e2e/release.json`, `c/index.json`).
+- **D-29 V-21 old-client subset** (I1a). Evidence: with the v0.6.6 binary, `test/e2e -m e2e_public` gives 6 passed, 8 skipped (release-cycle cases, fixtures unpublished), 11 failed — all 11 in `test_publisher_trust_public.py`, asserting declared-publisher refusals 0.6.6 does not implement (e.g. expects 77, gets 64 `no_identity_provided`); branch binary 17 passed, 8 skipped, 0 failed. **Decision:** no install regression; the suite has no old-client marker, so V-21's "old-client subset" is the install cases. Gating the new-client cases by client version is I1b work. The toolchain's `ocx-previous` is 0.6.5, not 0.6.6 (retro entry; pin unchanged).
 
 Open questions: none (`[NEEDS CLARIFICATION]` count 0).
 
@@ -213,9 +216,9 @@ IDs are the coverage join keys. "Red" and "green" name the case each test must s
 | P-PRUNE | ocx | C-011, C-012, C-013, S-009, V-15, V-16 | `ocx_package/src/prune.rs` + `prune/tests.rs`, `ocx_announce/src/forge/github_packages.rs`, `ocx_announce/src/forge.rs` (`pub mod`), `ocx_cli/src/command/package_prune.rs`, `test/tests/fake_forge.py`, `test/tests/test_package_prune.py` | 1 | A0 | review | merged |
 | P-SWITCH | ocx | S-004, V-19 | `test/tests/test_self_candidate_switch.py` (new; code change only if red persists) | 1 | — | — | merged |
 | P-WF | ocx | C-014…C-017, S-001…S-003, S-005, V-01, V-09 (structure) | `.github/workflows/**` (C-016 list), `dist-workspace.toml` (delete), `.github/{actionlint.yaml,zizmor.yml,renovate-local.json}`, `packaging/sdkgen/trust-policy.toml`, `.claude/tests/test_workflows.py`, `.claude/hooks/pre_tool_use_validator.py`, `.claude/tests/test_hooks.py`, `about.toml` | 2 | P-STAMP, P-PKG; contract-only: P-PRUNE (C-013 flag), P-402 (C-009), P-694 (C-008) — first met at I1 | hard, review | merged |
-| P-FIX | e2e-package, e2e-index, ocx | C-018, C-019, C-020, V-04, V-11, V-12, V-18 | e2e-package `.github/workflows/{release,backfill,unsigned-v}.yml`, `scripts/*`, `README.md`; e2e-index `scripts/build_index.py`, `scripts/test_build_index.py`, `ocx.toml`, `ocx.lock`, `.github/workflows/dev-pin.yml`, `TESTING.md`; ocx `test/e2e/test_release_cycle_public.py` | 3 | P-WF | — | active |
-| P-DOCS | ocx | C-022, V-20 | `website/src/content/docs/publishing/snapshot-tracks.md`, `getting-started/install-ocx.mdx`, `CONTRIBUTING.md`, `.claude/rules/{workflow-release,subsystem-ci,workflow-git,subsystem-deps}.md`, `.claude/rules/rust-quality/current-apis.md`, `.claude/rules.md`, `.claude/artifacts/{adr_bazel_build_adoption,system_design_publisher_trust}.md`, `.serena/memories/tech_stack.md`, generated reference pages | 3 | P-WF, P-PRUNE, P-HOST, P-NOVERIFY | — | active |
-| I1 (I1a local, I1b fixture loop) | ocx (+fixtures) | integration, V-05, V-21, V-22, META M-1…M-8 | — | 4 | all of wave 1–3 | — | pending |
+| P-FIX | e2e-package, e2e-index, ocx | C-018, C-019, C-020, V-04, V-11, V-12, V-18 | e2e-package `.github/workflows/{release,backfill,unsigned-v}.yml`, `scripts/*`, `README.md`; e2e-index `scripts/build_index.py`, `scripts/test_build_index.py`, `ocx.toml`, `ocx.lock`, `.github/workflows/dev-pin.yml`, `TESTING.md`; ocx `test/e2e/test_release_cycle_public.py` | 3 | P-WF | — | merged |
+| P-DOCS | ocx | C-022, V-20 | `website/src/content/docs/publishing/snapshot-tracks.md`, `getting-started/install-ocx.mdx`, `CONTRIBUTING.md`, `.claude/rules/{workflow-release,subsystem-ci,workflow-git,subsystem-deps}.md`, `.claude/rules/rust-quality/current-apis.md`, `.claude/rules.md`, `.claude/artifacts/{adr_bazel_build_adoption,system_design_publisher_trust}.md`, `.serena/memories/tech_stack.md`, generated reference pages | 3 | P-WF, P-PRUNE, P-HOST, P-NOVERIFY | — | merged |
+| I1 (I1a local, I1b fixture loop) | ocx (+fixtures) | integration, V-05, V-21, V-22, META M-1…M-8 | — | 4 | all of wave 1–3 | — | active |
 | EU | all | end-user break pass | regression tests + fixes as found | 5 | I1 | — | pending |
 | H | all | ≤4 hardening review rounds | fixes | 6 | EU | — | pending |
 | P-MIRROR | ocx-mirror | C-021, V-17 | worktree `sat-ocx-mirror-release`: `.github/workflows/{release,backfill,oci-publish,deploy-dev,build-matrix,docs}.yml`, `ocx.toml`, `ocx.lock`, `taskfiles/release.taskfile.yml`, `AGENTS.md` | 7 | H, finalize push, M-10 green, M-14 green, M-11 | — | pending |
@@ -321,10 +324,10 @@ Each: when → command shape → grant → evidence. Tokens come from the enviro
 
 - **M-1** (I1, after wave 3 merged): `git push https://github.com/ocx-sh/e2e-index HEAD:refs/heads/ocx-src/<short-sha>` of the ocx feature branch → e2e push grant → branch SHA equals local HEAD.
 - **M-2**: push e2e-package local `main` (force allowed); create environment `release-backfill` with the owner as required reviewer → e2e settings grant → `gh api repos/ocx-sh/e2e-package/environments`.
-- **M-3**: push e2e-index local `main` → e2e grant → Pages deploy green.
+- **M-3**: push e2e-index local `main` (wire tree now at the repo root, D-28) → e2e grant → Pages deploy green; `dev-pin.yml` stays red (placeholder) until M-13.
 - **M-4**: `gh workflow run release.yml -R ocx-sh/e2e-package -f mode=dev -f ocx_repository=ocx-sh/e2e-index -f ocx_ref=<sha>`; make `ghcr.io/ocx-sh/dev/e2e-package` public if private (fixture package setting, e2e grant) → run URL, tag list of the dev package and of `ghcr.io/ocx-sh/e2e-package` before/after.
 - **M-5**: same, `mode=release version=0.1.0` → run URL; `ocx package verify`/`--attestation` per platform; GitHub release asset list.
-- **M-6**: dispatch `unsigned-v.yml`; dispatch `backfill.yml` twice (approve the environment each time) → both run tables; attestation counts.
+- **M-6**: dispatch `unsigned-v.yml` (`-f ocx_repository=ocx-sh/e2e-index -f ocx_ref=<sha>`) and commit its `index-out` artifact (the `0.0.1` row) to e2e-index `main`; dispatch `backfill.yml` twice (approve the environment each time) → both run tables; attestation counts.
 - **M-7**: `mode=candidate version=0.1.0-rc1` → commit its announce artifact to e2e-index `main` (D-11); floating-tag digests before/after; install by pin and install+select (local); then `mode=release version=0.1.1 prune_after_days=0` (or a local `ocx package prune --forge github` with the local token) → prune output, commit the `--tags-from-registry` announce artifact; `--dry-run` and a shared-version refusal run locally against the fixture package → outputs (the GHCR docs row evidence).
 - **M-8**: `gh workflow run client-e2e.yml -R ocx-sh/e2e-index -f ocx_repository=ocx-sh/e2e-index -f ocx_ref=<sha>` → run URL green (V-11, V-12, V-18 via C-020).
 - **Finalize push** (meta's /hex-finalize): push `hex/signing-dogfood`, open the ocx PR (body: owner actions list + D-8 `publishers` text for later).

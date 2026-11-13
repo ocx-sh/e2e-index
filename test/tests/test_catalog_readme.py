@@ -23,7 +23,7 @@ import pytest
 
 pytestmark = pytest.mark.command("index_catalog")
 
-# The readmes the publish workflows hand to `ocx package description push --readme`.
+# The readme `release.yml`'s publish job hands to `ocx package description push --readme`.
 CATALOG_READMES = [Path(__file__).parents[2] / "packaging" / "ocx" / "CATALOG.md"]
 
 # Markdown `![alt](target)` / `[text](target)`, HTML `src="target"` /

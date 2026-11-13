@@ -324,6 +324,17 @@ jobs:
           set -euo pipefail
           tags_file="$GITHUB_WORKSPACE/published-tags.txt"
           ocx package cascade repair --tags-file "$tags_file" "${PACKAGE}:${TAG}"
+      # Repository-level catalog description (the `__ocx.desc` tag), refreshed on every publish. CATALOG.md, not
+      # README.md: the README carries CI badges and repo-relative links that resolve nowhere in a catalog
+      # renderer, and CATALOG.md's frontmatter supplies the title, description and keywords.
+      - name: Push the catalog description
+        env:
+          PACKAGE: ${{ needs.plan.outputs.package }}
+          OCX_AUTH_ghcr_io_USER: ${{ github.actor }}
+          OCX_AUTH_ghcr_io_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ocx package description push "$PACKAGE" --readme packaging/ocx/CATALOG.md --logo assets/logo.svg
       - name: Upload the published tags
         if: ${{ inputs.mode != 'dev' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

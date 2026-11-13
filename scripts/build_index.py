@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Generate the e2e.ocx.sh index site under docs/ from the tags published at ghcr.io/ocx-sh/e2e-package.
+"""Generate the e2e.ocx.sh index site at the repository root from the tags published at ghcr.io/ocx-sh/e2e-package.
 
 Layout and wire shapes follow the ocx index format: config.json, c/index.json, p/<repo>.json roots and
 p/<repo>/o/sha256/<hex>.json dispatch objects (the OCI image index a tag resolves to, verbatim).
 
-    build_index.py                 read every tag's image index from ghcr.io anonymously, write docs/
+    build_index.py                 read every tag's image index from ghcr.io anonymously, write the repository root
     build_index.py --dry-run       fixture digests and a fixed timestamp, no network
 """
 
@@ -19,6 +19,8 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+# The wire tree sits at the repository root, where `ocx package announce` reads it from the forge.
+DEFAULT_OUT = Path(__file__).resolve().parent.parent
 REGISTRY = "ghcr.io"
 PACKAGE_PATH = "ocx-sh/e2e-package"
 REPOSITORY = f"oci://{REGISTRY}/{PACKAGE_PATH}"
@@ -221,7 +223,7 @@ def keep_release_root(out: Path, observed: str, catalog: dict[str, str]) -> None
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--out", type=Path, default=Path(__file__).resolve().parent.parent / "docs")
+    parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--dry-run", action="store_true", help="use fixture digests; touch no network")
     args = parser.parse_args()
     if args.dry_run:

@@ -17,13 +17,13 @@ Every root lists the tags `main`, `tag`, `other`, `key`, `unsigned` and `two-sbo
 
 ## Generating the site
 
-`scripts/build_index.py` reads each published tag's image index from ghcr.io anonymously and writes `docs/`.
+`scripts/build_index.py` reads each published tag's image index from ghcr.io anonymously and writes the wire tree at the repository root (`config.json`, `c/`, `p/`).
 Run it only after the `e2e-package` tags are published. `--dry-run` writes fixture digests with no network access.
 `python3 scripts/test_build_index.py` checks the dry-run output.
 
 ## Site
 
-`.github/workflows/pages.yml` renders `docs/` with the `ocx-catalog` renderer and publishes it through Pages.
+`.github/workflows/pages.yml` renders the root wire tree with the `ocx-catalog` renderer and publishes it through Pages.
 The wire files keep their bytes and URLs; the index URL is `https://ocx-sh.github.io/e2e-index`.
 Every root is named `e2e.ocx.sh/e2e/<root>`, so the site's copy buttons give refs a configured client resolves.
 

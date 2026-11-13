@@ -90,5 +90,13 @@ class ReleaseRoot(unittest.TestCase):
             self.assertEqual(on_disk["e2e/release"], b.sha256(committed))
 
 
+class DefaultOut(unittest.TestCase):
+    def test_wire_tree_lives_at_the_repository_root(self):
+        # `ocx package announce` reads p/<pkg>.json and config.json from the repository root, as on ocx-sh/index.
+        self.assertEqual(b.DEFAULT_OUT, Path(__file__).resolve().parent.parent)
+        self.assertTrue((b.DEFAULT_OUT / "config.json").is_file())
+        self.assertFalse((b.DEFAULT_OUT / "docs").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

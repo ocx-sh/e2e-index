@@ -1,6 +1,6 @@
 name: pages
 
-# Renders docs/ with the ocx-catalog renderer and publishes it; the renderer mirrors the index wire files
+# Renders the root wire tree (config.json, c/, p/) with the ocx-catalog renderer and publishes it; the renderer mirrors the index wire files
 # (/config.json, /c/index.json, /p/**) to the site root unchanged.
 on:
   push:
@@ -26,9 +26,11 @@ jobs:
         with:
           no-cache: true
       - run: bun install --frozen-lockfile
+      # The renderer reads a source dir holding only the wire files, not the whole repository.
+      - run: mkdir wire-src && cp -r config.json c p .nojekyll wire-src/
       - run: bun x ocx-catalog build --out site-out
       # The index URL promises the committed wire bytes; fail the deploy if the renderer served anything else.
-      - run: diff -r docs site-out --exclude=.nojekyll | grep -v '^Only in site-out' | (! grep .)
+      - run: diff -r wire-src site-out --exclude=.nojekyll | grep -v '^Only in site-out' | (! grep .)
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site-out

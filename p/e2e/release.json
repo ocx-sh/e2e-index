@@ -96,6 +96,16 @@
     "0.1.0_20261113201541": {
       "content": "sha256:622afbffb312640ed899d2a5e9950ec8caf3af44d852d0f964574949eb38b10f",
       "observed": "2026-11-13T21:34:09Z"
+    },
+    "0.1.2-rc1_20261113213548": {
+      "content": "sha256:14b824bebb06ed5a72f7f035a677c40a8bebb7a2d19602c1ee1132409717f35d",
+      "observed": "2026-11-13T21:41:45Z",
+      "ephemeral": true
+    },
+    "0.1.2-rc1": {
+      "content": "sha256:3f1337516af38706f06df3c5c6b338391465f45463842692c264e4b50f145ed9",
+      "observed": "2026-11-13T21:41:45Z",
+      "ephemeral": true
     }
   }
 }

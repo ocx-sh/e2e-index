@@ -1,7 +1,7 @@
 name: pages
 
-# Renders docs/ with the ocx-catalog renderer and publishes it, with the index wire files copied over the
-# rendered site byte for byte so /config.json, /c/index.json and /p/** keep their bytes and URLs.
+# Renders docs/ with the ocx-catalog renderer and publishes it; the renderer mirrors the index wire files
+# (/config.json, /c/index.json, /p/**) to the site root unchanged.
 on:
   push:
     branches: [main]
@@ -26,12 +26,9 @@ jobs:
         with:
           no-cache: true
       - run: bun install --frozen-lockfile
-      - run: python3 scripts/stage_site_source.py
       - run: bun x ocx-catalog build --out site-out
-      # The renderer mirrors the staged roots, which carry extra fields; serve the committed wire bytes instead.
-      - run: |
-          cp -rf docs/config.json docs/c docs/p site-out/
-          find site-out/p -name _root.json -delete
+      # The index URL promises the committed wire bytes; fail the deploy if the renderer served anything else.
+      - run: diff -r docs site-out --exclude=.nojekyll | grep -v '^Only in site-out' | (! grep .)
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site-out

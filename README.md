@@ -25,6 +25,7 @@ Run it only after the `e2e-package` tags are published. `--dry-run` writes fixtu
 
 `.github/workflows/pages.yml` renders `docs/` with the `ocx-catalog` renderer and publishes it through Pages.
 The wire files keep their bytes and URLs; the index URL is `https://ocx-sh.github.io/e2e-index`.
+Every root is named `e2e.ocx.sh/e2e/<root>`, so the site's copy buttons give refs a configured client resolves.
 
 ## Testing by hand
 

@@ -22,6 +22,9 @@ class DryRun(unittest.TestCase):
                 root = json.loads(root_bytes)
                 self.assertEqual(root["repository"], "oci://ghcr.io/ocx-sh/e2e-package")
                 self.assertEqual(set(root["tags"]), set(b.TAGS))
+                self.assertEqual(root["name"], f"e2e.ocx.sh/{repository}")
+                readme = (out / "p" / repository / "o" / "sha256" / f"{root['desc']['readme'].split(':')[1]}.md")
+                self.assertEqual(b.sha256(readme.read_bytes()), root["desc"]["readme"])
                 for row in root["tags"].values():
                     hex_digest = row["content"].split(":")[1]
                     obj = (out / "p" / repository / "o" / "sha256" / f"{hex_digest}.json").read_bytes()

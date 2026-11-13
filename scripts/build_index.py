@@ -22,6 +22,18 @@ from pathlib import Path
 REGISTRY = "ghcr.io"
 PACKAGE_PATH = "ocx-sh/e2e-package"
 REPOSITORY = f"oci://{REGISTRY}/{PACKAGE_PATH}"
+# The logical registry name clients configure; every root's `name` starts with it, as on ocx.sh.
+INDEX_NAME = "e2e.ocx.sh"
+# Each root's catalog page shows this file as its readme; rerun this script after editing it.
+README = Path(__file__).resolve().parent.parent / "TESTING.md"
+# One line per root for its catalog page; keys match publishers().
+SUMMARY = {
+    "claims": "keyless publisher matched by claim name, plus a key publisher",
+    "oid": "the same claims keyed by raw OID, plus a key publisher",
+    "tagged": "keyless publisher matching a tag-triggered release only",
+    "none": "no publishers declared, so nothing is checked",
+    "future": "only entries this ocx does not understand, so every install is refused",
+}
 TAGS = ("main", "tag", "other", "key", "unsigned", "two-sboms")
 INDEX_MEDIA_TYPE = "application/vnd.oci.image.index.v1+json"
 
@@ -128,6 +140,8 @@ def write(path: Path, data: bytes) -> None:
 def build(out: Path, indexes: dict[str, bytes], observed: str) -> dict[str, str]:
     """Write the whole site; returns the catalog (`repository` -> root digest)."""
     write(out / "config.json", canonical({"format_version": 1}))
+    readme = README.read_bytes()
+    readme_digest = sha256(readme)
     catalog: dict[str, str] = {}
     for root_name, value in publishers().items():
         repository = f"e2e/{root_name}"
@@ -136,7 +150,20 @@ def build(out: Path, indexes: dict[str, bytes], observed: str) -> dict[str, str]
             digest = sha256(body)
             write(out / "p" / repository / "o" / "sha256" / f"{digest.split(':')[1]}.json", body)
             tags[tag] = {"content": digest, "observed": observed}
-        root: dict = {"repository": REPOSITORY, "tags": tags}
+        write(out / "p" / repository / "o" / "sha256" / f"{readme_digest.split(':')[1]}.md", readme)
+        root: dict = {
+            "name": f"{INDEX_NAME}/{repository}",
+            "repository": REPOSITORY,
+            "status": "active",
+            "created": observed[:10],
+            "desc": {
+                "title": repository,
+                "description": f"Fixture: {SUMMARY[root_name]}.",
+                "keywords": ["e2e", "publishers"],
+                "readme": readme_digest,
+            },
+            "tags": tags,
+        }
         if value is not None:
             root["publishers"] = value
         root_bytes = canonical(root)

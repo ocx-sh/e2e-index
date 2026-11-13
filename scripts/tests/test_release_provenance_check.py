@@ -63,7 +63,7 @@ def test_scan_flags_a_declared_testing_variable(tmp_path: Path, name: str) -> No
 
 
 def test_scan_flags_the_fault_variable_followed_by_a_value(tmp_path: Path) -> None:
-    # No exemption: the name followed by `=` is a seam string too (D-23).
+    # No exemption: the name followed by `=` is a seam string too, so a release binary must not carry it.
     planted = tmp_path / "red-hook-text"
     planted.write_bytes(b"\x7fELF" + b"\0" * 32 + b"__OCX_TESTING_FAULT=after_lock_write" + b"\0" * 8)
     assert len(scan([planted])) == 1

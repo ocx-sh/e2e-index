@@ -69,7 +69,7 @@ pub const COMMANDS: &[(&str, u32)] = &[
     ("package install", 1),
     ("package prune", 1),
     ("package pull", 1),
-    ("package push", 1),
+    ("package push", 2),
     ("package receipt", 1),
     ("package sbom", 2),
     ("package select", 1),

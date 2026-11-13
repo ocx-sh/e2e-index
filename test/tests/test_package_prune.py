@@ -876,3 +876,38 @@ def test_forge_gitlab_is_refused_with_a_usage_error(ocx: OcxRunner, unique_repo:
 
     assert result.returncode == 64, result.stderr
     assert "480" in result.stderr, "the refusal names the tracking issue"
+
+
+@pytest.mark.requires_testing_build
+def test_forge_prune_of_a_host_only_the_index_names_exits_64_before_any_forge_request(
+    ocx: OcxRunner,
+    unique_repo: str,
+    tmp_path: Path,
+    fake_forge: FakeForge,
+    index_server: static_index.StaticIndexServer,
+) -> None:
+    """The index points the repository at the local registry, a host the operator never vouched for."""
+    _publish(ocx, unique_repo, [BUILD_1], tmp_path)
+    package = _indexed(ocx, index_server, unique_repo, {BUILD_1: True})
+    before = _tags(ocx.registry, unique_repo)
+
+    result = ocx.run(
+        "package",
+        "prune",
+        "--forge",
+        "github",
+        package,
+        BUILD_1,
+        format="json",
+        check=False,
+        env_overrides={
+            "__OCX_TESTING_GITHUB_API_URL": fake_forge.base_url,
+            f"OCX_AUTH_{re.sub(r'[^a-zA-Z0-9]', '_', ocx.registry)}_TOKEN": "test-forge-token",
+        },
+    )
+
+    assert result.returncode == 64, result.stderr
+    assert "index-supplied host" in result.stderr, "the refusal says why"
+    assert _deletes(fake_forge) == 0
+    assert fake_forge.requests == [], "no request reached the forge"
+    assert _tags(ocx.registry, unique_repo) == before

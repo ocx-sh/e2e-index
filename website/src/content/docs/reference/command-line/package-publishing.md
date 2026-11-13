@@ -495,8 +495,8 @@ ocx package push [OPTIONS] [LAYERS]...
 | `--platform`, `-p` | `PLATFORM` | Target platform (e.g. `linux/amd64`, or `any` for platform-agnostic content) |
 | `--rekor-upload` |  | Record the signature in the Rekor transparency log |
 | `--rekor-url` | `URL` | Rekor transparency-log endpoint |
-| `--sbom` | `PATH` | After the push, attest this CycloneDX SBOM against the pushed manifest. A failure does not undo the push, is recorded in the report and sets the exit code |
-| `--sign` |  | Sign each platform manifest this push writes, inline. A failure does not undo the push, is recorded in the report and sets the exit code |
+| `--sbom` | `PATH` | Attest this CycloneDX SBOM against the pushed manifest, before any tag is written |
+| `--sign` |  | Sign each platform manifest this push writes, inline, before any tag is written |
 | `--signature-format` | `bundle\|simplesigning\|both` | Signature wire format: bundle (default), simplesigning, or both. A sidecar appends a layer, never replacing one; `attest` with no signing identity refuses it (exit 64) |
 | `--tags-file` | `PATH` | After a successful push, append the pushed tag and any cascade tags to this file, one per line (creating it if absent), so `ocx package announce --tags-file` can pick them up |
 

@@ -39,8 +39,8 @@ and show every red on synthetic fixtures; their greens exercise the parser only
 (ADR AM-2): the green on a real release build — the one proof that dependency
 bytes stay clear of the markers — is `task release:provenance:proof`, a step of
 `task release:gate`. `scan-binaries.yml` runs `--scan` and `--exec` over the binaries
-that `release.yml` and `deploy-dev.yml` are about to publish, and `--link` over the
-cargo-dist Linux archives; no deep or pull-request job scans, because the
+that `release.yml` is about to publish in any mode, and `--link` over the
+Linux archives; no deep or pull-request job scans, because the
 Bazel-built `ocx` carries the placeholders by design.
 
 Exit codes: 0 clean, 1 finding, 2 usage (bad arguments, unreadable file, no readelf).

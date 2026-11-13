@@ -120,7 +120,7 @@ tasks:
         mkdir -p "$OUT/content/bin"
         install -m 0755 "$BIN" "$OUT/content/bin/ocx-sdkgen${ext}"
         # A redistribution of the binary owes recipients the same notices as
-        # the release archive (oci-publish.yml does the same for ocx/cli).
+        # the release archive (scripts/publish_ocx_package.sh does the same for ocx/cli).
         install -m 0644 LICENSE LICENSE-THIRD-PARTY.md "$OUT/content/"
         ocx package create "$OUT/content" \
           -m packaging/sdkgen/metadata.json \

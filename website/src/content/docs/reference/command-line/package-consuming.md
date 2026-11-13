@@ -189,7 +189,13 @@ One is a selected tag listed without the ephemeral marker (exit 81). The other i
 
 `--force` deletes such tags anyway and is required for a namespace with no index. A tag already gone from the registry is reported as absent.
 
-Prune deletes registry tags only: never a digest, a platform manifest, a keep tag or a referrer, and it never writes the index. A keep tag pins the manifest past the tag's deletion: push ephemeral builds with `--no-keep-tag`, or prune frees no storage.
+On the registry API prune deletes registry tags only: never a digest, a platform manifest, a keep tag or a referrer, and it never writes the index. A keep tag pins the manifest past the tag's deletion: push ephemeral builds with `--no-keep-tag`, or prune frees no storage.
+
+A `ghcr.io` or `containers.<host>` registry cannot delete a tag, so prune deletes through the GitHub packages API with the credential ocx uses for that registry, and `--forge github` selects this on any other host. It deletes the version holding the tag, the platform manifests only that version lists, and the referrer tags of those manifests.
+
+A version that also carries a tag outside the selection exits 81. `--dry-run` lists the same set and deletes nothing.
+
+`--forge gitlab` is not supported.
 
 Pass `--tags-file PATH` to append each gone tag the index lists, then publish the removal with `ocx package announce --tags-file PATH`.
 
@@ -219,7 +225,7 @@ Exits 78 when the index points at a forbidden host, and 79 when the index has no
 
 Exits 81 for a durable tag, a namespace with no index, or `--offline`. Exits 82 when the registry does not delete tags.
 
-A dry run exits 81 or 75 exactly as the real run would, while 80 and 82 surface only on a real delete.
+A dry run exits 81 or 75 exactly as the real run would, while 80 and 82 surface only on a real delete. On a GitHub package a dry run also reads the packages API, so it can exit 80 there.
 
 Details: <https://ocx.sh/docs/reference/command-line/package-consuming/#package-prune>
 
@@ -231,6 +237,7 @@ ocx package prune [OPTIONS] <PACKAGE> [TAG]...
 | --- | --- | --- |
 | `--dry-run` |  | Run the safeguard and report; delete nothing, write nothing |
 | `--force` |  | Delete tags the index does not mark ephemeral, or with no index to ask. A forced tag's index row stays until a reviewed announce removes it |
+| `--forge` | `github\|gitlab` | Delete through this forge's package API, for a registry that has no tag DELETE (`github`) |
 | `--keep-builds` | `N` | With `--prerelease`: keep the newest N builds and the rolling tag (N >= 1) |
 | `--prerelease` | `VERSION` | Select every build of this pre-release and its rolling tag, e.g. `0.5.0-canary` |
 | `--tags-file` | `PATH` | Append each gone tag the index lists, one per line, for `ocx package announce --tags-file`. Creates the file if absent and keeps the tags already in it. Written on every run that gets past selection, empty included and even when the run then fails partway, never on a dry run. A forced delete of a tag the index does not list writes nothing |
@@ -317,7 +324,7 @@ ocx package sbom [OPTIONS] <IDENTIFIER>
 | `--no-cache` |  | Bypass the referrers-capability cache for this invocation |
 | `--no-verify` |  | List documents without verifying anything; `--output` still writes the document, with one stderr warning naming the referrer digest |
 | `--output`, `-o` | `PATH` | Write the SBOM document to PATH ("-" for stdout). Several candidates of one type resolve to the newest; otherwise exit 65 (`multiple_attestations`), a terminal exits 64; under `--no-verify` a stderr warning names the referrer digest |
-| `--platform`, `-p` | `PLATFORM` | Narrow into one platform of an image index |
+| `--platform`, `-p` | `PLATFORM` | Platform of an image index to act on; defaults to the host platform |
 | `--rekor-url` | `URL` | Rekor transparency-log endpoint |
 | `--signature-format` | `FORMAT` | Signature wire format to accept: bundle or simplesigning |
 | `--sigstore-trusted-root` | `PATH` | Trust-root override: a Sigstore trusted-root JSON (or a directory holding trusted_root.json), named by a bare path or a file:// one. A file over 1 MiB or unreadable exits 74 |
@@ -415,7 +422,7 @@ ocx package verify [OPTIONS] <IDENTIFIER>
 | `--certificate-oidc-issuer` | `URL` | Expected certificate OIDC issuer (exact match) |
 | `--key` | `REF` | Sign or verify with a key pair instead of keyless Sigstore |
 | `--no-cache` |  | Bypass the referrers-capability cache for this invocation |
-| `--platform`, `-p` | `PLATFORM` | Narrow into one platform of an image index |
+| `--platform`, `-p` | `PLATFORM` | Platform of an image index to act on; defaults to the host platform |
 | `--rekor-url` | `URL` | Rekor transparency-log endpoint |
 | `--signature-format` | `FORMAT` | Signature wire format to accept: bundle or simplesigning |
 | `--sigstore-trusted-root` | `PATH` | Trust-root override: a Sigstore trusted-root JSON (or a directory holding trusted_root.json), named by a bare path or a file:// one. A file over 1 MiB or unreadable exits 74 |

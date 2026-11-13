@@ -619,6 +619,7 @@ A local policy or safeguard refused the operation; loosen the flag or pass --for
 | `credential_helper_not_installed` | The credential helper is not installed, and an ocx started by a credential helper never downloads |
 | `frozen_refused` | The verb discovers new digests, which frozen mode forbids |
 | `index_resolution_blocked` | A local policy refused resolving through the index |
+| `no_verify_refused` | --no-verify was refused because the system config requires signatures |
 | `offline_attest_refused` | Attaching was refused because offline mode is on |
 | `offline_manifest_missing` | Offline mode and the manifest is not stored locally |
 | `offline_mode` | A network operation was attempted in offline mode |
@@ -627,6 +628,7 @@ A local policy or safeguard refused the operation; loosen the flag or pass --for
 | `project_resolution_blocked` | A local policy refused resolving a binding |
 | `prune_no_index` | No index is configured to check the tags against |
 | `prune_refused_durable` | The index still lists a tag prune would delete, and the tag is durable |
+| `prune_shared_version` | A version selected for deletion is shared with another tag |
 | `publishers_required` | The registry requires index-declared publishers and the package has none |
 
 ## `82` Unsupported {#exit-82}

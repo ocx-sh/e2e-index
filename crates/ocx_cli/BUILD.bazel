@@ -344,7 +344,11 @@ rust_doc_test(
     crate = ":ocx_cli",
     # rust_doc_test does not inherit the library's features: without these the
     # `__testing`-gated items' doctests silently drop out (C-031 name diff).
-    crate_features = ["__testing"],
+    # The library's select, spelled twice: `build:drift` compares the two lists.
+    crate_features = select({
+        "//bazel/release:stamped": [],
+        "//conditions:default": ["__testing"],
+    }),
 )
 
 crate_tree()

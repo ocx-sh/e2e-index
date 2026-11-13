@@ -43,9 +43,15 @@ const GITLAB_REFUSAL: &str =
     registry but not yet in the index (exit 75).\n\n\
     `--force` deletes such tags anyway and is required for a namespace with no index. A tag \
     already gone from the registry is reported as absent.\n\n\
-    Prune deletes registry tags only: never a digest, a platform manifest, a keep tag or a \
-    referrer, and it never writes the index. A keep tag pins the manifest past the tag's \
+    On the registry API prune deletes registry tags only: never a digest, a platform manifest, \
+    a keep tag or a referrer, and it never writes the index. A keep tag pins the manifest past the tag's \
     deletion: push ephemeral builds with `--no-keep-tag`, or prune frees no storage.\n\n\
+    A `ghcr.io` or `containers.<host>` registry cannot delete a tag, so prune deletes through the \
+    GitHub packages API with the credential ocx uses for that registry, and `--forge github` \
+    selects this on any other host. It deletes the version holding the tag, the platform \
+    manifests only that version lists, and the referrer tags of those manifests. A version that \
+    also carries a tag outside the selection exits 81. `--dry-run` lists the same set and \
+    deletes nothing. `--forge gitlab` is not supported.\n\n\
     Pass `--tags-file PATH` to append each gone tag the index lists, then publish the removal \
     with `ocx package announce --tags-file PATH`.\n\n\
     Builds are deleted oldest first and the rolling tag last. After each delete prune confirms \
@@ -72,7 +78,8 @@ const GITLAB_REFUSAL: &str =
     package. Exits 80 when the credential cannot delete. Exits 81 for a durable tag, a \
     namespace with no index, or `--offline`. Exits 82 when the registry does not delete tags. \
     A dry run exits 81 or 75 exactly as the real run would, while 80 and 82 surface only on a \
-    real delete.\n\n\
+    real delete. On a GitHub package a dry run also reads the packages API, so it can exit 80 \
+    there.\n\n\
     Details: <https://ocx.sh/docs/reference/command-line/package-consuming/#package-prune>"
 )]
 // Exactly one selection mode: both is a conflict, neither a missing argument, each exit 64.
@@ -498,6 +505,8 @@ mod tests {
             "--tags-file",
             "--force",
             "80 and 82 surface only on a real delete",
+            "GitHub packages API",
+            "--forge github",
             "https://ocx.sh/docs/reference/command-line/package-consuming/#package-prune",
         ] {
             assert!(help.contains(needle), "long help must mention {needle}:\n{help}");

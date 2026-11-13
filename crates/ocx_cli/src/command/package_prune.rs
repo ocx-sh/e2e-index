@@ -46,9 +46,9 @@ const GITLAB_REFUSAL: &str =
     On the registry API prune deletes registry tags only: never a digest, a platform manifest, \
     a keep tag or a referrer, and it never writes the index. A keep tag pins the manifest past the tag's \
     deletion: push ephemeral builds with `--no-keep-tag`, or prune frees no storage.\n\n\
-    A `ghcr.io` or `containers.<host>` registry cannot delete a tag, so prune deletes through the \
-    GitHub packages API with the credential ocx uses for that registry, and `--forge github` \
-    selects this on any other host. It deletes the version holding the tag, the platform \
+    A `ghcr.io` registry cannot delete a tag, so prune deletes through the GitHub packages API \
+    with the credential ocx uses for that registry. A GitHub Enterprise `containers.<host>` \
+    registry, or any other host, needs `--forge github`. It deletes the version holding the tag, the platform \
     manifests only that version lists, and the referrer tags of those manifests. A version that \
     also carries a tag outside the selection exits 81. `--dry-run` lists the same set and \
     deletes nothing. `--forge gitlab` is not supported.\n\n\
@@ -121,6 +121,7 @@ pub struct PackagePrune {
 
     /// Delete through this forge's package API, for a registry that has no tag DELETE (`github`).
     ///
+    /// Inferred for `ghcr.io` only; a GitHub Enterprise `containers.<host>` registry needs it named.
     /// `gitlab` is refused: GitLab's registry does not accept OCX packages.
     #[arg(long, value_name = "FORGE")]
     forge: Option<ForgeKind>,
@@ -218,7 +219,7 @@ impl PackagePrune {
             Some(url) => url,
             None => api_base_for_registry(registry).ok_or_else(|| {
                 UsageError::new(format!(
-                    "no GitHub API is known for the registry {registry}, use a ghcr.io or containers.<host> package"
+                    "no GitHub API is known for the registry {registry}, use a ghcr.io package, or name a GitHub Enterprise containers.<host> registry with --forge github"
                 ))
             })?,
         };
@@ -411,15 +412,19 @@ mod tests {
     }
 
     #[test]
-    fn the_forge_is_inferred_from_a_github_packages_host() {
+    fn the_forge_is_inferred_from_ghcr_only() {
         let prune = prune_with_forge(None);
-        for host in ["ghcr.io", "containers.ghe.example"] {
-            assert_eq!(
-                prune.forge_for(&location(host)),
-                Some(super::ForgeKind::GitHub),
-                "{host}"
-            );
-        }
+        assert_eq!(prune.forge_for(&location("ghcr.io")), Some(super::ForgeKind::GitHub));
+    }
+
+    #[test]
+    fn a_github_enterprise_host_needs_the_forge_named() {
+        let host = location("containers.example.com");
+        assert_eq!(prune_with_forge(None).forge_for(&host), None);
+        assert_eq!(
+            prune_with_forge(Some(super::ForgeKind::GitHub)).forge_for(&host),
+            Some(super::ForgeKind::GitHub)
+        );
     }
 
     #[test]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -16,7 +17,11 @@ PACKAGE = "ghcr.io/ocx-sh/ocx/cli"
 
 
 class FakeOcx:
-    """A registry of `(ref, platform) -> {"sig", "sbom"}` held by IDENTITY; every call is recorded."""
+    """A registry of `(ref, platform) -> {"sig", "sbom"}` held by IDENTITY; every call is recorded.
+
+    `package inspect` answers each platform's manifest digest; verify, sign and attest only answer for
+    that digest-pinned subject, and refuse `-p` on it as ocx does for a reference with nothing to narrow.
+    """
 
     def __init__(
         self,
@@ -27,6 +32,11 @@ class FakeOcx:
         self.held = held or {}
         self.calls: list[list[str]] = []
         self.verify_exit: int | None = None
+        self.subjects = {
+            f"{ref}@{digest_of(ref, platform)}": (ref, platform)
+            for ref, listed in platforms.items()
+            for platform in listed
+        }
 
     def __call__(self, argv: list[str]) -> tuple[int, str, str]:
         self.calls.append(argv)
@@ -35,10 +45,24 @@ class FakeOcx:
             listed = self.platforms.get(ref)
             if listed is None:
                 return 79, "", "not found"
-            return 0, json.dumps({"items": [{"package": ref, "platforms": listed}]}), ""
+            candidates = [
+                {
+                    "digest": digest_of(ref, platform),
+                    "platform": dict(zip(("os", "architecture"), platform.split("/"))),
+                }
+                for platform in listed
+            ]
+            return (
+                0,
+                json.dumps({"packages": [{"name": ref, "candidates": candidates}]}),
+                "",
+            )
         verb = argv[1]
-        platform = argv[argv.index("-p") + 1]
-        key = (ref, platform)
+        if ref not in self.subjects:
+            return 64, "", f"{ref} is not a digest-pinned platform manifest"
+        if "-p" in argv:
+            return 64, "", "a platform narrows an index and this is a single manifest"
+        key = self.subjects[ref]
         if verb == "verify":
             if self.verify_exit is not None:
                 return self.verify_exit, "", "boom"
@@ -58,6 +82,13 @@ class FakeOcx:
             for c in self.calls
             if len(c) > 1 and c[0] == "package" and c[1] in {"sign", "attest"}
         ]
+
+    def inspects(self) -> list[list[str]]:
+        return [c for c in self.calls if c[:2] == ["--remote", "--format"]]
+
+
+def digest_of(ref: str, platform: str) -> str:
+    return "sha256:" + hashlib.sha256(f"{ref} {platform}".encode()).hexdigest()
 
 
 def tag_rows(fake: FakeOcx, dry_run: bool = False) -> list[bf.Row]:
@@ -139,3 +170,47 @@ def test_main_exits_1_when_a_row_fails_and_still_prints_the_table(
     )
     assert code == 1
     assert "FAILED" in capsys.readouterr().out
+
+
+def test_every_check_and_write_targets_the_digest_resolved_once() -> None:
+    ref = f"{PACKAGE}:0.6.6"
+    fake = FakeOcx({ref: ["linux/amd64", "darwin/arm64"]})
+    rows = tag_rows(fake)
+    assert len(fake.inspects()) == 1, (
+        "each tag's platforms and digests are resolved once"
+    )
+    acted = [c for c in fake.calls if c[:1] == ["package"]]
+    assert len(acted) == 2 * 4, (
+        "verify and write, for the signature and the sbom, on each platform"
+    )
+    for call in acted:
+        assert call[-1] in fake.subjects, f"{call} does not name a resolved digest"
+        assert "-p" not in call, f"{call} narrows a digest-pinned manifest"
+    assert {r.platform: r.digest for r in rows} == {
+        "linux/amd64": digest_of(ref, "linux/amd64"),
+        "darwin/arm64": digest_of(ref, "darwin/arm64"),
+    }
+    assert digest_of(ref, "linux/amd64") in bf.table(rows)
+
+
+def test_a_platform_with_no_build_triple_fails_its_row_while_the_others_continue(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ref = f"{PACKAGE}:0.6.6"
+    fake = FakeOcx({ref: ["linux/riscv64", "linux/amd64"]})
+    monkeypatch.setattr(bf, "generate_sbom", lambda *_: Path("sbom.json"))
+    code = bf.main(
+        ["--package", PACKAGE, "--identity", IDENTITY, "--issuer", ISSUER, "v0.6.6"],
+        run=fake,
+    )
+    out = capsys.readouterr()
+    assert code == 1, "an unknown platform fails the run at the end"
+    rows = {
+        line.split("|")[2].strip(): line
+        for line in out.out.splitlines()
+        if line.startswith("| v")
+    }
+    assert "FAILED" in rows["linux/riscv64"]
+    assert "attested" in rows["linux/amd64"], "the other platform still gets its sbom"
+    assert "linux/riscv64" in out.err and "no build triple" in out.err

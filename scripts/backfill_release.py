@@ -10,12 +10,15 @@ platform of the package tag `X.Y.Z`: a signature by IDENTITY is added when `ocx 
 finds none, and a CycloneDX attestation by IDENTITY when `verify --attestation --type cyclonedx`
 finds none. Each is judged on its own, so a platform that only lacks its SBOM gets only that, and
 a second run changes nothing. A tag is never moved: both add referrers to the digest the tag
-already names. `--dry-run` reports what would change and writes nothing.
+already names. The tag is resolved to each platform's manifest digest once, and every check and
+write then names `REF@DIGEST`, so a tag that moves mid-run cannot send a signature to a manifest
+that was never checked. `--dry-run` reports what would change and writes nothing.
 
 The SBOM of a version is generated from the source at its git tag by `generate_sbom`, the one
 function a repository with another build overrides; it returns the path of the CycloneDX JSON.
 
-Exit codes: 0 every row done or skipped, 1 a row failed, 64 a bad argument.
+Exit codes: 0 every row done or skipped, 1 a row failed (a platform with no build triple fails its
+row and the others continue), 64 a bad argument.
 """
 
 from __future__ import annotations
@@ -67,6 +70,7 @@ class Row:
     platform: str
     signature: str
     sbom: str
+    digest: str = "-"
 
 
 def version_tags(root: Path) -> list[str]:
@@ -80,36 +84,31 @@ def version_tags(root: Path) -> list[str]:
     return sorted(t for t in done.stdout.split() if TAG.match(t))
 
 
-def platforms_of(run: Run, ref: str) -> list[str]:
-    """The platforms of the index `ref` names; empty when the package has no such tag."""
-    code, out, err = run(
-        ["--remote", "--format", "json", "index", "list", "--platforms", ref]
-    )
+def platforms_of(run: Run, ref: str) -> dict[str, str]:
+    """Platform -> manifest digest of the index `ref` names; empty when the package has no such tag."""
+    code, out, err = run(["--remote", "--format", "json", "package", "inspect", ref])
     if code == 79:
-        return []
+        return {}
     if code != 0:
-        raise BackfillError(
-            f"listing the platforms of {ref} exited {code}: {err.strip()[:200]}"
-        )
-    found: list[str] = []
-    for item in json.loads(out).get("items", []):
-        for platform in item.get("platforms") or []:
-            found.append(
-                platform
-                if isinstance(platform, str)
-                else f"{platform['os']}/{platform['architecture']}"
-            )
-    return sorted(found)
+        raise BackfillError(f"inspecting {ref} exited {code}: {err.strip()[:200]}")
+    found: dict[str, str] = {}
+    for entry in json.loads(out).get("packages", []):
+        for candidate in entry.get("candidates") or []:
+            platform = candidate["platform"]
+            name = f"{platform['os']}/{platform['architecture']}"
+            if name in found:
+                raise BackfillError(
+                    f"{ref} lists {name} twice; the platform is ambiguous"
+                )
+            found[name] = candidate["digest"]
+    return dict(sorted(found.items()))
 
 
-def has(
-    run: Run, ref: str, platform: str, identity: str, issuer: str, attestation: bool
-) -> bool:
+def has(run: Run, subject: str, identity: str, issuer: str, attestation: bool) -> bool:
+    """Whether IDENTITY has signed (or attested) `subject`, a digest-pinned platform manifest."""
     argv = [
         "package",
         "verify",
-        "-p",
-        platform,
         "--certificate-identity",
         identity,
         "--certificate-oidc-issuer",
@@ -117,14 +116,21 @@ def has(
     ]
     if attestation:
         argv += ["--attestation", "--type", "cyclonedx"]
-    code, _, err = run([*argv, ref])
+    code, _, err = run([*argv, subject])
     if code == 0:
         return True
     if code in ABSENT:
         return False
-    raise BackfillError(
-        f"verifying {ref} ({platform}) exited {code}: {err.strip()[:200]}"
-    )
+    raise BackfillError(f"verifying {subject} exited {code}: {err.strip()[:200]}")
+
+
+def triple_of(platform: str) -> str:
+    try:
+        return TRIPLE[platform]
+    except KeyError:
+        raise BackfillError(
+            f"no build triple for platform {platform}; add it to TRIPLE"
+        ) from None
 
 
 def generate_sbom(root: Path, version: str, triple: str, out_dir: Path) -> Path:
@@ -184,54 +190,65 @@ def backfill_tag(
 ) -> list[Row]:
     version = tag.removeprefix("v")
     ref = f"{package}:{version}"
-    platforms = platforms_of(run, ref)
-    if not platforms:
+    digests = platforms_of(run, ref)
+    if not digests:
         return [Row(tag, "-", "no package", "no package")]
     rows = []
-    for platform in platforms:
-        if has(run, ref, platform, identity, issuer, attestation=False):
+    for platform, digest in digests.items():
+        # The digest, never the tag: `-p` has nothing to narrow on a single manifest.
+        subject = f"{ref}@{digest}"
+        if has(run, subject, identity, issuer, attestation=False):
             signature = "skipped"
         elif dry_run:
             signature = "would sign"
         else:
-            code, _, err = run(["package", "sign", "--no-tty", "-p", platform, ref])
+            code, _, err = run(["package", "sign", "--no-tty", subject])
             if code != 0:
                 raise BackfillError(
-                    f"signing {ref} ({platform}) exited {code}: {err.strip()[:200]}"
+                    f"signing {subject} ({platform}) exited {code}: {err.strip()[:200]}"
                 )
             signature = "signed"
-        if has(run, ref, platform, identity, issuer, attestation=True):
+        if has(run, subject, identity, issuer, attestation=True):
             attested = "skipped"
         elif dry_run:
             attested = "would attest"
         else:
-            predicate = sbom(version, platform)
+            try:
+                predicate = sbom(version, platform)
+            except BackfillError as error:
+                print(f"backfill_release: {tag} ({platform}): {error}", file=sys.stderr)
+                rows.append(Row(tag, platform, signature, "FAILED", digest))
+                continue
             code, _, err = run(
                 [
                     "package",
                     "attest",
                     "--no-tty",
-                    "-p",
-                    platform,
                     "--type",
                     "cyclonedx",
                     "--predicate",
                     str(predicate),
-                    ref,
+                    subject,
                 ]
             )
             if code != 0:
                 raise BackfillError(
-                    f"attesting {ref} ({platform}) exited {code}: {err.strip()[:200]}"
+                    f"attesting {subject} ({platform}) exited {code}: {err.strip()[:200]}"
                 )
             attested = "attested"
-        rows.append(Row(tag, platform, signature, attested))
+        rows.append(Row(tag, platform, signature, attested, digest))
     return rows
 
 
 def table(rows: list[Row]) -> str:
-    lines = ["| tag | platform | signature | sbom |", "| --- | --- | --- | --- |"]
-    lines += [f"| {r.tag} | {r.platform} | {r.signature} | {r.sbom} |" for r in rows]
+    lines = [
+        "| tag | platform | digest | signature | sbom |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    lines += [
+        f"| {r.tag} | {r.platform} | {r.digest} | {r.signature} | {r.sbom} |"
+        for r in rows
+    ]
     return "\n".join(lines)
 
 
@@ -279,13 +296,14 @@ def main(argv: list[str] | None = None, run: Run = run_ocx) -> int:
                     args.issuer,
                     args.dry_run,
                     lambda version, platform: generate_sbom(
-                        root, version, TRIPLE[platform], Path(scratch)
+                        root, version, triple_of(platform), Path(scratch)
                     ),
                 )
             except (BackfillError, subprocess.CalledProcessError) as error:
                 print(f"backfill_release: {tag}: {error}", file=sys.stderr)
                 rows.append(Row(tag, "-", "FAILED", "FAILED"))
                 failed = True
+    failed = failed or any("FAILED" in (r.signature, r.sbom) for r in rows)
     report = table(rows)
     print(report)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")

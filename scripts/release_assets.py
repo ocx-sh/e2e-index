@@ -53,7 +53,7 @@ SbomRunner = Callable[[Path, str, str | None, str], Path]
 
 
 def cargo_cyclonedx(root: Path, fmt: str, target: str | None, stem: str) -> Path:
-    """Run `cargo cyclonedx` once; it writes `<stem>.cdx.<fmt>` beside the manifest."""
+    """Run `cargo cyclonedx` once; it appends `.<fmt>` to the override, so `<stem>.cdx` yields `<stem>.cdx.<fmt>`."""
     cmd = [
         "cargo",
         "cyclonedx",
@@ -64,7 +64,7 @@ def cargo_cyclonedx(root: Path, fmt: str, target: str | None, stem: str) -> Path
     ]
     if target:
         cmd += ["--target", target]
-    cmd += ["--override-filename", stem]
+    cmd += ["--override-filename", f"{stem}.cdx"]
     subprocess.run(cmd, cwd=root, check=True)
     return root / CDX_MANIFEST.parent / f"{stem}.cdx.{fmt}"
 

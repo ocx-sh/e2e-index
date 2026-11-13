@@ -48,7 +48,8 @@ const GITLAB_REFUSAL: &str =
     deletion: push ephemeral builds with `--no-keep-tag`, or prune frees no storage.\n\n\
     A `ghcr.io` registry cannot delete a tag, so prune deletes through the GitHub packages API \
     with the credential ocx uses for that registry. A GitHub Enterprise `containers.<host>` \
-    registry, or any other host, needs `--forge github`. It deletes the version holding the tag, the platform \
+    registry needs `--forge github` and the repository named on that host directly; when the \
+    index supplies the host, any host but `ghcr.io` is refused with exit 64. It deletes the version holding the tag, the platform \
     manifests only that version lists, and the referrer tags of those manifests. A version that \
     also carries a tag outside the selection exits 81. `--dry-run` lists the same set and \
     deletes nothing. `--forge gitlab` is not supported.\n\n\
@@ -121,7 +122,8 @@ pub struct PackagePrune {
 
     /// Delete through this forge's package API, for a registry that has no tag DELETE (`github`).
     ///
-    /// Inferred for `ghcr.io` only; a GitHub Enterprise `containers.<host>` registry needs it named.
+    /// Inferred for `ghcr.io` only; a GitHub Enterprise `containers.<host>` registry needs it named, with the
+    /// repository given on that host directly, since a host the index supplies must be `ghcr.io`.
     /// `gitlab` is refused: GitLab's registry does not accept OCX packages.
     #[arg(long, value_name = "FORGE")]
     forge: Option<ForgeKind>,
@@ -171,6 +173,7 @@ impl PackagePrune {
         }
         let run = match self.forge_for(&target.repository) {
             Some(ForgeKind::GitHub) => {
+                Self::refuse_unvouched_forge_host(target.index.is_some(), target.repository.registry())?;
                 let deleter =
                     Self::github_deleter(&context, client, &target.repository, &self.selection_label()).await?;
                 prune::prune_with(client, &deleter, &target, &request).await
@@ -204,6 +207,19 @@ impl PackagePrune {
     /// The forge to delete through: the one named, else the one the registry host implies.
     fn forge_for(&self, repository: &ocx_oci::OciIdentifier) -> Option<ForgeKind> {
         self.forge.or_else(|| forge_for_registry(repository.registry()))
+    }
+
+    /// An index-supplied registry host is deleted through the GitHub API only when it is `ghcr.io`: the
+    /// operator vouched for no other host, and the credential for it would go to the API that host names.
+    /// A host the operator typed themselves (no index) may be a `containers.<host>` enterprise registry.
+    fn refuse_unvouched_forge_host(indexed: bool, registry: &str) -> anyhow::Result<()> {
+        if indexed && forge_for_registry(registry).is_none() {
+            return Err(UsageError::new(format!(
+                "the index names the registry {registry}, and an index-supplied host is deleted through the GitHub packages API only on ghcr.io; name the registry repository on that host directly instead"
+            ))
+            .into());
+        }
+        Ok(())
     }
 
     /// A GitHub Packages deleter for `repository`, authenticated with the credential ocx already resolves
@@ -573,5 +589,12 @@ mod tests {
             assert!(help.contains(needle), "long help must mention {needle}:\n{help}");
         }
         assert!(help.is_ascii(), "help text must stay ASCII");
+    }
+
+    #[test]
+    fn index_supplied_host_other_than_ghcr_is_refused() {
+        assert!(super::PackagePrune::refuse_unvouched_forge_host(true, "containers.evil.example").is_err());
+        assert!(super::PackagePrune::refuse_unvouched_forge_host(true, "ghcr.io").is_ok());
+        assert!(super::PackagePrune::refuse_unvouched_forge_host(false, "containers.ghe.example").is_ok());
     }
 }

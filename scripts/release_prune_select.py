@@ -10,7 +10,7 @@
 `<X.Y.Z>-dev` tag is never selected. `candidates` selects every candidate tag of `<X.Y.Z>`
 (`<X.Y.Z>-rc<N>_<UTC>` builds and rolling `<X.Y.Z>-rc<N>` tags) once the final `<X.Y.Z>_<UTC>` build is
 at least N days old; before the final exists or while it is younger, nothing of that version is selected. One tag per line on
-stdout. A tag that fits no shape is ignored, so a registry holding other tags selects nothing from them.
+stdout, and nothing at all when none is selected. A tag that fits no shape is ignored, so a registry holding other tags selects nothing from them.
 
 Exit codes: 0 selected (possibly nothing), 64 a bad argument.
 """
@@ -89,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.kind == "dev"
         else select_candidates(tags, cutoff)
     )
-    print("\n".join(chosen))
+    sys.stdout.write("".join(f"{tag}\n" for tag in chosen))
     return 0
 
 

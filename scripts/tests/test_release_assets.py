@@ -87,6 +87,12 @@ def test_checksums_follow_the_v066_format(built: Path) -> None:
 
 
 def test_the_manifest_carries_the_v066_artifact_fields(built: Path) -> None:
+    """Compares `artifacts` and `releases[0]` only.
+
+    The generator drops v0.6.6's other top-level fields (`dist_version`, `announcement_title`,
+    `systems`, ...). No known consumer reads them: setup-ocx `download.ts` and www-setup `gen-dist.sh`
+    read the `.sha256` files and `sha256.sum` only.
+    """
     fixture = json.loads((FIXTURES / "dist-manifest.json").read_text(encoding="utf-8"))
     ours = json.loads((built / "dist-manifest.json").read_text(encoding="utf-8"))
     assert set(ours["artifacts"]) == set(fixture["artifacts"])

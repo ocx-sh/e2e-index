@@ -166,7 +166,8 @@ impl PackagePrune {
         };
         let run = match self.forge_for(&target.repository) {
             Some(ForgeKind::GitHub) => {
-                let deleter = Self::github_deleter(&context, client, &target.repository).await?;
+                let deleter =
+                    Self::github_deleter(&context, client, &target.repository, &self.selection_label()).await?;
                 prune::prune_with(client, &deleter, &target, &request).await
             }
             _ => prune::prune(client, &target, &request).await,
@@ -206,6 +207,7 @@ impl PackagePrune {
         context: &crate::app::Context,
         client: &'a ocx_oci::Client,
         repository: &ocx_oci::OciIdentifier,
+        label: &str,
     ) -> anyhow::Result<GithubPackagesDeleter<'a>> {
         let registry = repository.registry();
         let api_base = match testing_api_base() {
@@ -220,11 +222,16 @@ impl PackagePrune {
             .repository()
             .split_once('/')
             .ok_or_else(|| UsageError::new("a GitHub package is named owner/package"))?;
-        let token = match ocx_oci::auth::Auth::new().get_or_fallback(registry).await {
-            ocx_oci::native::Auth::Basic(_, secret) => secret,
-            ocx_oci::native::Auth::Bearer(token) => token,
-            ocx_oci::native::Auth::Anonymous => String::new(),
-        };
+        // Refused before any request: an empty bearer header would only earn the forge's 401 and a confusing hint.
+        let token = secret_of(ocx_oci::auth::Auth::new().get_or_fallback(registry).await).ok_or_else(|| {
+            prune::PruneError::DeleteDenied {
+                repository: repository.to_string(),
+                tag: label.to_owned(),
+                source: ocx_oci::client::error::ClientError::Authentication(Box::new(std::io::Error::other(format!(
+                    "no credential is configured for {registry}, which the GitHub packages API needs; run `ocx login {registry}`"
+                )))),
+            }
+        })?;
         let http = build_forge_http_client(FORGE_TIMEOUT, context.extra_roots_merged())?;
         Ok(GithubPackagesDeleter::new(
             client,
@@ -234,6 +241,15 @@ impl PackagePrune {
             package.to_owned(),
             ForgeToken::new(token),
         ))
+    }
+
+    /// Names the selection in an error that has no single tag to point at.
+    fn selection_label(&self) -> String {
+        self.tags
+            .first()
+            .cloned()
+            .or_else(|| self.prerelease.as_ref().map(ToString::to_string))
+            .unwrap_or_default()
     }
 
     fn refuse_gitlab(&self) -> anyhow::Result<()> {
@@ -253,6 +269,16 @@ impl PackagePrune {
                 tags: self.tags.clone(),
             },
         }
+    }
+}
+
+/// The secret of a resolved credential, or `None` for anonymous access or an empty secret.
+fn secret_of(auth: ocx_oci::native::Auth) -> Option<String> {
+    match auth {
+        ocx_oci::native::Auth::Basic(_, secret) | ocx_oci::native::Auth::Bearer(secret) => {
+            Some(secret).filter(|secret| !secret.is_empty())
+        }
+        ocx_oci::native::Auth::Anonymous => None,
     }
 }
 
@@ -406,6 +432,32 @@ mod tests {
         assert_eq!(
             prune.forge_for(&location("localhost:5000")),
             Some(super::ForgeKind::GitHub)
+        );
+    }
+
+    #[test]
+    fn a_shared_version_refusal_carries_its_slug_and_the_policy_exit_code() {
+        let error = ocx_package::prune::PruneError::SharedVersion {
+            repository: "ghcr.io/acme/tool".to_owned(),
+            tag: "0.5.0".to_owned(),
+            other_tag: "1.0.0".to_owned(),
+        };
+        assert_eq!(
+            crate::exit::detail_slug(ocx_exit::ClassifyErrorKind::kind_detail(&error)),
+            "prune_shared_version"
+        );
+        assert_eq!(crate::exit::classify_error(&error), ocx_exit::ExitCode::PolicyBlocked);
+    }
+
+    #[test]
+    fn only_a_non_empty_secret_is_a_credential() {
+        use ocx_oci::native::Auth;
+        assert_eq!(super::secret_of(Auth::Anonymous), None);
+        assert_eq!(super::secret_of(Auth::Bearer(String::new())), None);
+        assert_eq!(super::secret_of(Auth::Bearer("t".into())).as_deref(), Some("t"));
+        assert_eq!(
+            super::secret_of(Auth::Basic("u".into(), "p".into())).as_deref(),
+            Some("p")
         );
     }
 

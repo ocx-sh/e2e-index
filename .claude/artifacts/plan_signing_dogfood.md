@@ -7,11 +7,11 @@
 - **Tier:** high
 - **Tier-grammar:** 5
 - **Updated:** 2026-11-13
-- **Active phase:** 4 — I1b (fixture proof loop); I1a done
-- **Step:** /hex-execute → awaiting META M-1 (I1b)
+- **Active phase:** 7 — P-MIRROR (not started); I1b local, EU and H done
+- **Step:** /hex-execute pass 2 done on the ocx side; remote META open (see report)
 - **Feature branch:** `hex/signing-dogfood` (ocx); `hex/signing-dogfood` in `.agents/worktrees/sat-ocx-mirror-release` (ocx-mirror, from its `origin/main`)
-- **Last update:** 2026-11-13 (I1a done on abe52112b; fixture clones carry local commits: e2e-package `dc5849a`,`7de9fda`; e2e-index `3861b81`,`d084989`)
-- **Next:** META M-1…M-8 (§ META steps), then `/hex-execute .claude/artifacts/plan_signing_dogfood.md` resumes at I1b; closing integration gate + review not yet run
+- **Last update:** 2026-11-13 (pass 2: I1b items 1–3 red→green, item 4 deferred D-31; EU 1 block + warns fixed; H 2 rounds; D-30…D-32)
+- **Next:** META push + fixture/dev dispatches (M-1…M-11), Codex pass after its usage reset, then P-MIRROR, then `/hex-review`
 
 ---
 
@@ -109,6 +109,10 @@ The discussion's eight open questions (D-1…D-8) take the recommended answer un
 
 - **D-28 e2e-index wire tree at the repository root** (P-FIX). Question: `ocx package announce` reads the committed root at `p/<pkg>.json` (plus `config.json`, `c/`) at the index repository root, as in `ocx-sh/index`; e2e-index served them from `docs/`. **Decision:** e2e-index moves to the production layout (`git mv`, e2e-index `d084989`); Pages assembles its site from the root files; served URLs unchanged. META commits of `index-out` artifacts land at the root (`p/e2e/release.json`, `c/index.json`).
 - **D-29 V-21 old-client subset** (I1a). Evidence: with the v0.6.6 binary, `test/e2e -m e2e_public` gives 6 passed, 8 skipped (release-cycle cases, fixtures unpublished), 11 failed — all 11 in `test_publisher_trust_public.py`, asserting declared-publisher refusals 0.6.6 does not implement (e.g. expects 77, gets 64 `no_identity_provided`); branch binary 17 passed, 8 skipped, 0 failed. **Decision:** no install regression; the suite has no old-client marker, so V-21's "old-client subset" is the install cases. Gating the new-client cases by client version is I1b work. The toolchain's `ocx-previous` is 0.6.5, not 0.6.6 (retro entry; pin unchanged).
+
+- **D-30 Corrections found in I1b/EU/H (pass 2).** D-4: the dev prune exempts the newest build of each dev line, so a quiet repository never loses its only build (EU block finding, regression-tested in `scripts/tests/test_release_prune_select.py`). D-20: the store is `.../ocx/dev-registry/<port>`, one store per port; `task release:local:registry:stop` stops it. D-21 correction: `ocx package push …:0.9.0-rc.1` is accepted as an opaque tag (not a version), so the guard is the `plan` job's `^X\.Y\.Z-rc[1-9][0-9]*$` check, which rejects `rc.1`. C-013: host inference selects the GitHub forge for `ghcr.io` only; a `containers.<host>` registry needs an explicit `--forge github`, so no registry credential is ever sent to a host derived from an index (H1 security fix). `ocx package push` contract version 1 → 2 (D-14 is a semantic break: tags appear only after signing), ledger entry plus sdkgen golden.
+- **D-31 `ocx-previous` 0.6.5 → 0.6.6** (I1b item 4). Question: bump the nesting-test pin? Evidence: V-21 is satisfied by the install subset with the 0.6.6 binary passed explicitly (D-29); the pin is read by `test/src/previous_release.py` for unrelated nesting tests, and bumping it relocks the test group. **Decision:** out of scope; follow-up candidate.
+- **D-32 V-21 red half.** Question: which fixture makes the publisher-trust new-client cases red? **Decision:** the local one: run `test/e2e/test_publisher_trust_public.py` with the v0.6.6 binary and the `new_client` gate removed — 11 failed (expects 77, gets 64); with the gate, they skip with a reason naming the client contract version (`package verify` < 2). No remote act.
 
 Open questions: none (`[NEEDS CLARIFICATION]` count 0).
 
@@ -218,9 +222,9 @@ IDs are the coverage join keys. "Red" and "green" name the case each test must s
 | P-WF | ocx | C-014…C-017, S-001…S-003, S-005, V-01, V-09 (structure) | `.github/workflows/**` (C-016 list), `dist-workspace.toml` (delete), `.github/{actionlint.yaml,zizmor.yml,renovate-local.json}`, `packaging/sdkgen/trust-policy.toml`, `.claude/tests/test_workflows.py`, `.claude/hooks/pre_tool_use_validator.py`, `.claude/tests/test_hooks.py`, `about.toml` | 2 | P-STAMP, P-PKG; contract-only: P-PRUNE (C-013 flag), P-402 (C-009), P-694 (C-008) — first met at I1 | hard, review | merged |
 | P-FIX | e2e-package, e2e-index, ocx | C-018, C-019, C-020, V-04, V-11, V-12, V-18 | e2e-package `.github/workflows/{release,backfill,unsigned-v}.yml`, `scripts/*`, `README.md`; e2e-index `scripts/build_index.py`, `scripts/test_build_index.py`, `ocx.toml`, `ocx.lock`, `.github/workflows/dev-pin.yml`, `TESTING.md`; ocx `test/e2e/test_release_cycle_public.py` | 3 | P-WF | — | merged |
 | P-DOCS | ocx | C-022, V-20 | `website/src/content/docs/publishing/snapshot-tracks.md`, `getting-started/install-ocx.mdx`, `CONTRIBUTING.md`, `.claude/rules/{workflow-release,subsystem-ci,workflow-git,subsystem-deps}.md`, `.claude/rules/rust-quality/current-apis.md`, `.claude/rules.md`, `.claude/artifacts/{adr_bazel_build_adoption,system_design_publisher_trust}.md`, `.serena/memories/tech_stack.md`, generated reference pages | 3 | P-WF, P-PRUNE, P-HOST, P-NOVERIFY | — | merged |
-| I1 (I1a local, I1b fixture loop) | ocx (+fixtures) | integration, V-05, V-21, V-22, META M-1…M-8 | — | 4 | all of wave 1–3 | — | active |
-| EU | all | end-user break pass | regression tests + fixes as found | 5 | I1 | — | pending |
-| H | all | ≤4 hardening review rounds | fixes | 6 | EU | — | pending |
+| I1 (I1a local, I1b fixture loop) | ocx (+fixtures) | integration, V-05, V-21, V-22, META M-1…M-8 | — | 4 | all of wave 1–3 | — | merged (local; remote META open) |
+| EU | all | end-user break pass | regression tests + fixes as found | 5 | I1 | — | merged |
+| H | all | ≤4 hardening review rounds | fixes | 6 | EU | — | merged (2 rounds; H2 found only smaller issues) |
 | P-MIRROR | ocx-mirror | C-021, V-17 | worktree `sat-ocx-mirror-release`: `.github/workflows/{release,backfill,oci-publish,deploy-dev,build-matrix,docs}.yml`, `ocx.toml`, `ocx.lock`, `taskfiles/release.taskfile.yml`, `AGENTS.md` | 7 | H, finalize push, M-10 green, M-14 green, M-11 | — | pending |
 
 Shared generated surfaces: A0 owns every golden for the new surfaces; any later change to generated text (`cli.json` help, reference pages, `exit-codes.md`) and the `test/SUITE_FLOOR` bump plus new Bazel acceptance targets (`test/bazel.bzl`, `scripts/bazel_gate_proofs.py`) are done once, in I1a, from the case counts each pipeline records in its commit body. Wave 1 runs eight pipelines concurrently; serialise only Bazel/cargo builds (`flock -o .agents/acceptance-suite.lock` for acceptance runs; one Bazel build at a time).

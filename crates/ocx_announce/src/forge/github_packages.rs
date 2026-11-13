@@ -6,8 +6,10 @@
 //! Contract: the owner type comes from `GET /users/{owner}`; the package's versions are listed with
 //! pagination; the delete set is the version carrying the tag, plus the platform-manifest versions only
 //! it references, plus the referrer fallback-tag versions (`sha256-<digest>`). A version in that set that
-//! carries another tag refuses the run with `prune_shared_version`. A 401 or 403 is the existing
-//! `DeleteDenied` (exit 80).
+//! carries another tag refuses the run with `prune_shared_version`, as does a version another remaining tagged
+//! version's index lists. A 401 or 403 is the existing `DeleteDenied` (exit 80), a 404 on the owner or the
+//! listing too, but a spent rate limit (429, or 403 with `x-ratelimit-remaining: 0`) is a transient failure
+//! (exit 75).
 
 use ocx_oci::{Digest, OciIdentifier};
 use ocx_package::prune::{DeletePlan, DeleteReport, PruneError, TagDeleter, confirm_gone};
@@ -79,14 +81,21 @@ impl GithubPackagesDeleter<'_> {
     ) -> Result<reqwest::Response, PruneError> {
         let response = builder.send().await.map_err(|error| forge_failure(&error))?;
         let status = response.status();
-        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-            return Err(PruneError::DeleteDenied {
-                repository: repository.to_string(),
-                tag: tag.to_string(),
-                source: ocx_oci::client::error::ClientError::Authentication(Box::new(std::io::Error::other(format!(
-                    "the forge answered {status}"
+        let exhausted = response
+            .headers()
+            .get("x-ratelimit-remaining")
+            .and_then(|value| value.to_str().ok())
+            == Some("0");
+        // A spent rate limit answers 403 (or 429) too; denying the credential for it would exit 80, not 75.
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS || (status == reqwest::StatusCode::FORBIDDEN && exhausted) {
+            return Err(PruneError::Registry(
+                ocx_oci::client::error::ClientError::RegistryTransient(Box::new(std::io::Error::other(format!(
+                    "GitHub Packages API: rate limit reached ({status}); retry later"
                 )))),
-            });
+            ));
+        }
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(denied(repository, tag, &format!("the forge answered {status}")));
         }
         Ok(response)
     }
@@ -97,6 +106,7 @@ impl GithubPackagesDeleter<'_> {
         let response = self
             .send(self.request(reqwest::Method::GET, &path), repository, tag)
             .await?;
+        refuse_not_found(&response, repository, tag)?;
         let body = ok_json(response).await?;
         match body.get("type").and_then(serde_json::Value::as_str) {
             Some("Organization") => Ok("orgs"),
@@ -128,6 +138,7 @@ impl GithubPackagesDeleter<'_> {
             let response = self
                 .send(self.request(reqwest::Method::GET, &path), repository, tag)
                 .await?;
+            refuse_not_found(&response, repository, tag)?;
             let body = ok_json(response).await?;
             let entries = body
                 .as_array()
@@ -184,11 +195,11 @@ impl TagDeleter for GithubPackagesDeleter<'_> {
         let versions = self.list_versions(collection, repository, first_tag).await?;
 
         let mut roots: Vec<&Version> = Vec::new();
-        let mut found: Vec<&String> = Vec::new();
+        let mut found: Vec<(&String, u64)> = Vec::new();
         for tag in &plan.tags {
             match versions.iter().find(|version| version.tags.contains(tag)) {
                 Some(version) => {
-                    found.push(tag);
+                    found.push((tag, version.id));
                     if !roots.iter().any(|root| root.id == version.id) {
                         roots.push(version);
                     }
@@ -200,60 +211,94 @@ impl TagDeleter for GithubPackagesDeleter<'_> {
             }
         }
 
-        let set = self.delete_set(repository, &versions, &roots).await?;
+        let set = self.delete_set(repository, &plan.tags, &versions, &roots).await?;
         refuse_shared(repository, &plan.tags, &set)?;
 
         if plan.dry_run {
             for version in &set {
                 log::info!("would delete {repository} version {} ({})", version.id, version.digest);
             }
-            report.would_delete.extend(found.into_iter().cloned());
+            report
+                .would_delete
+                .extend(found.into_iter().map(|(tag, _)| tag.clone()));
             return Ok(());
         }
-        for version in &set {
-            let path = format!("{}/{}", self.versions_path(collection), version.id);
-            let response = self
-                .send(self.request(reqwest::Method::DELETE, &path), repository, first_tag)
-                .await?;
-            let status = response.status();
-            if !status.is_success() && status != reqwest::StatusCode::NOT_FOUND {
-                return Err(forge_failure(&format!(
-                    "deleting version {} answered {status}",
-                    version.id
-                )));
+        // Roots lead the set. A tag is reported the moment its own version is gone, so a later failure
+        // on a platform or referrer version cannot relabel it as untouched.
+        for (position, version) in set.iter().enumerate() {
+            self.delete_version(collection, version, repository, first_tag).await?;
+            if position < roots.len() {
+                for (tag, _) in found.iter().filter(|(_, id)| *id == version.id) {
+                    confirm_gone(self.client, repository, tag).await?;
+                    report.deleted.push((*tag).clone());
+                }
             }
-        }
-        for tag in found {
-            confirm_gone(self.client, repository, tag).await?;
-            report.deleted.push(tag.clone());
         }
         Ok(())
     }
 }
 
 impl GithubPackagesDeleter<'_> {
+    async fn delete_version(
+        &self,
+        collection: &str,
+        version: &Version,
+        repository: &OciIdentifier,
+        tag: &str,
+    ) -> Result<(), PruneError> {
+        let path = format!("{}/{}", self.versions_path(collection), version.id);
+        let response = self
+            .send(self.request(reqwest::Method::DELETE, &path), repository, tag)
+            .await?;
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            log::debug!("{repository} version {} was already gone (404)", version.id);
+        } else if !status.is_success() {
+            return Err(forge_failure(&format!(
+                "deleting version {} answered {status}",
+                version.id
+            )));
+        }
+        Ok(())
+    }
+
     /// The versions removing `roots` removes: the roots, the platform manifests no remaining tagged version
-    /// lists, and the referrer fallback-tag versions of all of those with the manifests they list. Roots first.
+    /// lists, and the referrer fallback-tag versions of all of those, referrers of referrers included.
+    /// Roots first. A root another remaining tagged version lists is refused as shared.
     async fn delete_set<'v>(
         &self,
         repository: &OciIdentifier,
+        requested: &[String],
         versions: &'v [Version],
         roots: &[&'v Version],
     ) -> Result<Vec<&'v Version>, PruneError> {
         let by_digest = |digest: &str| versions.iter().find(|version| version.digest == digest);
         let is_root = |version: &Version| roots.iter().any(|root| root.id == version.id);
 
-        let mut protected: Vec<String> = Vec::new();
+        let mut protected: Vec<(String, String)> = Vec::new();
         for version in versions
             .iter()
             .filter(|version| !is_root(version) && !version.tags.is_empty())
         {
-            protected.extend(self.children(repository, &version.digest).await?);
+            let other_tag = version.tags.first().cloned().unwrap_or_default();
+            for child in self.children(repository, &version.digest).await? {
+                protected.push((child, other_tag.clone()));
+            }
+        }
+        for root in roots {
+            if let Some((_, other_tag)) = protected.iter().find(|(digest, _)| *digest == root.digest) {
+                let own = root.tags.iter().find(|tag| requested.contains(tag));
+                return Err(PruneError::SharedVersion {
+                    repository: repository.to_string(),
+                    tag: own.or(requested.first()).cloned().unwrap_or_default(),
+                    other_tag: other_tag.clone(),
+                });
+            }
         }
         let mut set: Vec<&Version> = roots.to_vec();
         for root in roots {
             for child in self.children(repository, &root.digest).await? {
-                if protected.contains(&child) {
+                if protected.iter().any(|(digest, _)| *digest == child) {
                     continue;
                 }
                 if let Some(version) = by_digest(&child) {
@@ -261,11 +306,16 @@ impl GithubPackagesDeleter<'_> {
                 }
             }
         }
-        let primary = set.clone();
-        for member in primary {
+        // Fixpoint over the referrers: an attestation's own signature hangs off the attestation's
+        // fallback tag. `push_unique` is the visited set.
+        let mut position = 0;
+        while let Some(&member) = set.get(position) {
+            position += 1;
             let wanted = fallback_tag(&member.digest);
             for carrier in versions.iter().filter(|version| version.tags.contains(&wanted)) {
-                push_unique(&mut set, carrier);
+                if !push_unique(&mut set, carrier) {
+                    continue;
+                }
                 for referrer in self.children(repository, &carrier.digest).await? {
                     if let Some(version) = by_digest(&referrer) {
                         push_unique(&mut set, version);
@@ -277,10 +327,36 @@ impl GithubPackagesDeleter<'_> {
     }
 }
 
-fn push_unique<'v>(set: &mut Vec<&'v Version>, version: &'v Version) {
-    if !set.iter().any(|member| member.id == version.id) {
+/// Adds `version` unless the set holds it; whether it was added.
+fn push_unique<'v>(set: &mut Vec<&'v Version>, version: &'v Version) -> bool {
+    let absent = !set.iter().any(|member| member.id == version.id);
+    if absent {
         set.push(version);
     }
+    absent
+}
+
+/// The credential cannot do what the request needs; exit 80.
+fn denied(repository: &OciIdentifier, tag: &str, message: &str) -> PruneError {
+    PruneError::DeleteDenied {
+        repository: repository.to_string(),
+        tag: tag.to_string(),
+        source: ocx_oci::client::error::ClientError::Authentication(Box::new(std::io::Error::other(
+            message.to_owned(),
+        ))),
+    }
+}
+
+/// GitHub answers 404 for a package the token cannot read as well as for one that does not exist.
+fn refuse_not_found(response: &reqwest::Response, repository: &OciIdentifier, tag: &str) -> Result<(), PruneError> {
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err(denied(
+            repository,
+            tag,
+            "the package was not found, or the token lacks package read access",
+        ));
+    }
+    Ok(())
 }
 
 /// `sha256:<hex>` becomes the referrers fallback tag `sha256-<hex>`.
@@ -397,8 +473,13 @@ mod tests {
                     let (method, target) = (parts.next().unwrap_or_default(), parts.next().unwrap_or_default());
                     seen.lock().expect("requests lock").push(format!("{method} {target}"));
                     let (status, body) = route(method, target);
+                    let limit = if body.contains("rate limit") {
+                        "X-RateLimit-Remaining: 0\r\n"
+                    } else {
+                        ""
+                    };
                     let reply = format!(
-                        "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\n{limit}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
                         body.len()
                     );
                     let _ = stream.write_all(reply.as_bytes()).await;
@@ -794,6 +875,155 @@ mod tests {
 
         assert_eq!(report.absent, ["old"]);
         assert!(fake.deletes().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_root_another_tagged_version_lists_is_refused_as_shared() {
+        let a = digest("a");
+        let (root_bytes, root_digest) = index(&[&a]);
+        let (durable_bytes, durable_digest) = index(&[&root_digest]);
+        let data = StubTransportData::new();
+        serve(&data, &root_digest, root_bytes);
+        serve(&data, &durable_digest, durable_bytes);
+        let client = stub_client(&data);
+        let versions = vec![
+            version(1, &root_digest, &["old"]),
+            version(2, &a, &[]),
+            version(3, &durable_digest, &["1.0.0"]),
+        ];
+        let fake = Fake::start(route("Organization", versions)).await;
+
+        let mut report = DeleteReport::default();
+        let error = deleter(&client, &fake.base)
+            .delete(&plan(&["old"], false), &mut report)
+            .await
+            .expect_err("a root the durable index lists is shared");
+
+        match error {
+            PruneError::SharedVersion { tag, other_tag, .. } => {
+                assert_eq!((tag.as_str(), other_tag.as_str()), ("old", "1.0.0"));
+            }
+            other => panic!("expected SharedVersion, got {other:?}"),
+        }
+        assert!(fake.deletes().is_empty(), "{:?}", fake.requests());
+    }
+
+    #[tokio::test]
+    async fn a_tag_whose_version_is_deleted_stays_deleted_when_a_later_delete_fails() {
+        let graph = graph(&["old"], None);
+        confirm_all_gone(&graph.data, 1);
+        let client = stub_client(&graph.data);
+        let inner = route("Organization", graph.versions.clone());
+        let failing = format!("/orgs/{OWNER}/packages/container/{PACKAGE}/versions/2");
+        let fake = Fake::start(move |method, target| {
+            if method == "DELETE" && target == failing {
+                return (500, r#"{"message":"boom"}"#.to_string());
+            }
+            inner(method, target)
+        })
+        .await;
+
+        let mut report = DeleteReport::default();
+        let error = deleter(&client, &fake.base)
+            .delete(&plan(&["old"], false), &mut report)
+            .await
+            .expect_err("the platform version delete fails");
+
+        assert!(matches!(error, PruneError::Registry(_)), "{error:?}");
+        assert_eq!(report.deleted, ["old"], "the root was deleted before the failure");
+    }
+
+    #[tokio::test]
+    async fn referrers_of_referrers_go_with_the_set() {
+        let (a, attestation, signature) = (digest("a"), digest("attestation"), digest("signature"));
+        let (root_bytes, root_digest) = index(&[&a]);
+        let (first_bytes, first_digest) = index(&[&attestation]);
+        let (second_bytes, second_digest) = index(&[&signature]);
+        let data = StubTransportData::new();
+        serve(&data, &root_digest, root_bytes);
+        serve(&data, &first_digest, first_bytes);
+        serve(&data, &second_digest, second_bytes);
+        confirm_all_gone(&data, 1);
+        let client = stub_client(&data);
+        let (first_tag, second_tag) = (fallback(&root_digest), fallback(&attestation));
+        let versions = vec![
+            version(1, &root_digest, &["old"]),
+            version(2, &a, &[]),
+            version(3, &first_digest, &[&first_tag]),
+            version(4, &attestation, &[]),
+            version(5, &second_digest, &[&second_tag]),
+            version(6, &signature, &[]),
+        ];
+        let fake = Fake::start(route("Organization", versions)).await;
+
+        let mut report = DeleteReport::default();
+        deleter(&client, &fake.base)
+            .delete(&plan(&["old"], false), &mut report)
+            .await
+            .expect("deleted");
+
+        let mut deleted = fake.deletes();
+        deleted.sort();
+        let expected: Vec<String> = (1..=6)
+            .map(|id| format!("DELETE /orgs/{OWNER}/packages/container/{PACKAGE}/versions/{id}"))
+            .collect();
+        assert_eq!(deleted, expected);
+    }
+
+    #[tokio::test]
+    async fn a_404_on_the_owner_or_the_listing_is_delete_denied() {
+        for listing_only in [false, true] {
+            let data = StubTransportData::new();
+            let client = stub_client(&data);
+            let fake = Fake::start(move |_, target| {
+                if listing_only && target == format!("/users/{OWNER}") {
+                    return (200, r#"{"type":"Organization"}"#.to_string());
+                }
+                (404, r#"{"message":"Not Found"}"#.to_string())
+            })
+            .await;
+
+            let mut report = DeleteReport::default();
+            let error = deleter(&client, &fake.base)
+                .delete(&plan(&["old"], false), &mut report)
+                .await
+                .expect_err("not found");
+
+            assert!(
+                matches!(&error, PruneError::DeleteDenied { .. }),
+                "{listing_only}: {error:?}"
+            );
+            let cause = std::error::Error::source(&error)
+                .map(ToString::to_string)
+                .unwrap_or_default();
+            assert!(cause.contains("lacks package read access"), "{listing_only}: {cause}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_spent_rate_limit_is_a_transient_failure_not_a_denied_credential() {
+        for (status, body) in [
+            (429u16, r#"{"message":"slow down"}"#),
+            (403, r#"{"message":"API rate limit exceeded"}"#),
+        ] {
+            let data = StubTransportData::new();
+            let client = stub_client(&data);
+            let fake = Fake::start(move |_, _| (status, body.to_string())).await;
+
+            let mut report = DeleteReport::default();
+            let error = deleter(&client, &fake.base)
+                .delete(&plan(&["old"], false), &mut report)
+                .await
+                .expect_err("rate limited");
+
+            assert!(
+                matches!(
+                    &error,
+                    PruneError::Registry(ocx_oci::client::error::ClientError::RegistryTransient(_))
+                ),
+                "{status}: {error:?}"
+            );
+        }
     }
 
     #[test]

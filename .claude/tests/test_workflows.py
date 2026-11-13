@@ -4531,6 +4531,6 @@ def test_the_stamped_release_build_neither_reads_nor_writes_the_remote_cache() -
     tasks = yaml.safe_load(CROSS_TASKFILE.read_text(encoding="utf-8"))["tasks"]
     body = "\n".join(c["cmd"] for c in tasks["build:release"]["cmds"] if isinstance(c, dict))
     set_line = next(line for line in body.splitlines() if line.lstrip().startswith("set -- "))
-    for flag in ("--remote_cache=", "--noremote_accept_cached", "--noremote_upload_local_results"):
+    for flag in ("--remote_cache=", "--noremote_accept_cached", "--noremote_upload_local_results", "--disk_cache="):
         assert re.search(rf"(?<!\S){re.escape(flag)}(?!\S)", set_line), f"build:release does not pass {flag}"
     assert body.count('"$@"') == 2, "the build and the cquery must share one argument list"

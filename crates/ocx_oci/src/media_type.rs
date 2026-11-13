@@ -20,12 +20,34 @@ pub const MEDIA_TYPE_SVG: &str = "image/svg+xml";
 
 pub const ACCEPTED_MANIFEST_MEDIA_TYPES: &[&str; 2] = &[MEDIA_TYPE_OCI_IMAGE_MANIFEST, MEDIA_TYPE_OCI_IMAGE_INDEX];
 
-/// Manifest media types a signer or verifier accepts when it fetches a subject or a referrer: the OCI image manifest
+/// Manifest media types a signer or verifier accepts when it fetches a referrer or a sidecar: the OCI image manifest
 /// and the Docker v2 manifest, never an index.
 pub const SIGNABLE_MANIFEST_TYPES: &[&str] = &[
     MEDIA_TYPE_OCI_IMAGE_MANIFEST,
     "application/vnd.docker.distribution.manifest.v2+json",
 ];
+
+/// Manifest media types sign, attest and verify accept when they fetch the subject: [`SIGNABLE_MANIFEST_TYPES`] plus
+/// the OCI image index. A registry that enforces `Accept` (ghcr.io) answers 404 for an index digest without it.
+pub const SUBJECT_MANIFEST_TYPES: &[&str] = &[
+    MEDIA_TYPE_OCI_IMAGE_MANIFEST,
+    MEDIA_TYPE_OCI_IMAGE_INDEX,
+    "application/vnd.docker.distribution.manifest.v2+json",
+];
+
+/// The media type a manifest document declares in its `mediaType` field, or the one its shape implies when the field
+/// is absent (OCI makes it optional): `manifests` marks an image index, anything else an image manifest.
+pub fn manifest_media_type(bytes: &[u8]) -> String {
+    let document: serde_json::Value = serde_json::from_slice(bytes).unwrap_or_default();
+    if let Some(declared) = document.get("mediaType").and_then(serde_json::Value::as_str) {
+        return declared.to_string();
+    }
+    if document.get("manifests").is_some() {
+        MEDIA_TYPE_OCI_IMAGE_INDEX.to_string()
+    } else {
+        MEDIA_TYPE_OCI_IMAGE_MANIFEST.to_string()
+    }
+}
 
 /// Infers a package layer's media type from its archive file name, or `None` for an unrecognized extension.
 pub fn media_type_from_filename(file_name: impl AsRef<str>) -> Option<&'static str> {
@@ -98,6 +120,24 @@ mod tests {
                 "application/vnd.docker.distribution.manifest.v2+json"
             ]
         );
+    }
+
+    #[test]
+    fn subject_manifest_types_add_only_the_oci_index_to_the_signable_types() {
+        let mut expected = SIGNABLE_MANIFEST_TYPES.to_vec();
+        expected.insert(1, MEDIA_TYPE_OCI_IMAGE_INDEX);
+        assert_eq!(SUBJECT_MANIFEST_TYPES, expected.as_slice());
+    }
+
+    #[test]
+    fn manifest_media_type_reads_the_declared_type_then_the_shape() {
+        assert_eq!(
+            manifest_media_type(br#"{"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[]}"#),
+            MEDIA_TYPE_OCI_IMAGE_INDEX
+        );
+        assert_eq!(manifest_media_type(br#"{"manifests":[]}"#), MEDIA_TYPE_OCI_IMAGE_INDEX);
+        assert_eq!(manifest_media_type(br#"{"layers":[]}"#), MEDIA_TYPE_OCI_IMAGE_MANIFEST);
+        assert_eq!(manifest_media_type(b"not json"), MEDIA_TYPE_OCI_IMAGE_MANIFEST);
     }
 
     #[test]

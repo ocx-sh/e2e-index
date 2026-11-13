@@ -181,6 +181,8 @@ jobs:
       stamp: true
       channel: ${{ inputs.mode }}
       version: ${{ needs.plan.outputs.semver }}
+    secrets:
+      BAZEL_CACHE_WRITE_AUTH: ${{ secrets.BAZEL_CACHE_WRITE_AUTH }}
 
   build:
     name: Release assets
@@ -244,7 +246,7 @@ jobs:
           OCX_AUTH_ghcr_io_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          tags_file="$RUNNER_TEMP/published-tags.txt"
+          tags_file="$GITHUB_WORKSPACE/published-tags.txt"
           : > "$tags_file"
           flags=(--sign --cascade --tags-file "$tags_file"
             --annotation "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}")
@@ -291,7 +293,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: published-tags
-          path: ${{ runner.temp }}/published-tags.txt
+          path: published-tags.txt
           if-no-files-found: error
           retention-days: 1
           overwrite: true

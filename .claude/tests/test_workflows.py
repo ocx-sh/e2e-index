@@ -41,6 +41,12 @@ Two shapes the crate split can break without any workflow going red:
   at all — so the predicate keys on `executionInfo.strategy`, and its red and green
   run over real BEP bytes in `test/fixtures/bep/cache_states.json`.
 
+- the signed release pipeline (`release.yml`, `backfill.yml`): which jobs may sign, the guards of the
+  `plan` step (run for real in a scratch repository), that a dev build reaches nothing but the dev
+  package, that `--force` prunes only dev builds, that the tag follows the signed publish, the platform
+  set against the cross taskfile, the inputs each caller passes, and the readiness gate on `publish`.
+  Each sweep is shown red on a mutated copy of the real text and green on the real files.
+
 The workflows are read with PyYAML (D11). One YAML 1.1 trap: the bare key
 `on` loads as the boolean `True`, so `_on` looks it up under both spellings.
 Glob liveness is `git ls-files -- ':(glob)<pattern>'`: git's `:(glob)`
@@ -1317,9 +1323,6 @@ TEMPLATE_OWNED_WORKFLOWS = frozenset({"verify-basic.yml", "verify-deep.yml"})
 #: The reusable workflows the repo owns behind the template's `repo` jobs. Each must
 #: exist, so a missing file reads as a finding rather than as nothing to sweep.
 REPO_OWNED_REUSABLE = ("basic-repo.yml", "deep-repo.yml", "acceptance.yml", "cross.yml")
-#: cargo-dist writes this one and a drift check fails a hand edit, so its
-#: `secrets: inherit` cannot be fixed here.
-GENERATED_WORKFLOWS = frozenset({"release.yml"})
 #: `(caller, callee)` edges the new tier shape implies. Fewer callers than this
 #: means the reader stopped matching, which a clean sweep cannot be told from.
 REQUIRED_CALL_EDGES = frozenset(
@@ -1329,6 +1332,14 @@ REQUIRED_CALL_EDGES = frozenset(
         ("basic-repo.yml", "acceptance.yml"),
         ("deep-repo.yml", "cross.yml"),
         ("basic-repo.yml", "cross.yml"),
+        ("release.yml", "verify-version.yml"),
+        ("release.yml", "readiness-gate.yml"),
+        ("release.yml", "cross.yml"),
+        ("release.yml", "scan-binaries.yml"),
+        ("release.yml", "docker-publish.yml"),
+        ("release.yml", "sdkgen-publish.yml"),
+        ("release-readiness.yml", "cross.yml"),
+        ("release-readiness.yml", "acceptance.yml"),
     }
 )
 
@@ -1730,7 +1741,7 @@ def _callers_without_the_secret(documents: list[tuple[str, dict]]) -> list[str]:
     for where, _, job in _jobs(documents):
         callee = _local_callee(job)
         caller = where.split(":")[0]
-        if callee is None or caller in GENERATED_WORKFLOWS:
+        if callee is None:
             continue
         if callee not in by_name:
             findings.append(f"{where} calls {callee}, which does not exist")
@@ -2288,16 +2299,6 @@ def test_an_optional_secret_may_be_left_unpassed() -> None:
     assert not _callers_without_the_secret(_corpus(also_declares=("OPTIONAL_SECRET", False)))
 
 
-def test_the_generated_workflow_exemption_is_still_needed() -> None:
-    """An exemption that outlives its reason hides a hand-written `secrets: inherit`."""
-    for name in GENERATED_WORKFLOWS:
-        jobs = (_load(WORKFLOW_DIR / name).get("jobs") or {}).values()
-        assert any(job.get("secrets") == "inherit" for job in jobs), (
-            f"{name} no longer passes `secrets: inherit` — drop it from GENERATED_WORKFLOWS "
-            f"so the sweep covers it"
-        )
-
-
 def test_a_template_owned_callee_is_exempt_from_the_declare_half_only() -> None:
     """The exemption skips `verify-deep.yml` as a callee that declares nothing, and nothing more."""
     lane = _corpus(declared=False)[0][1]
@@ -2613,28 +2614,6 @@ def test_every_scan_marker_is_a_placeholder_the_testing_build_plants() -> None:
         )
 
 
-def test_release_host_needs_the_provenance_scan() -> None:
-    """`host` (the GitHub Release, then every post-announce publish) waits for the scan,
-    reads its result, and the scan waits for the binaries it scans (P-4)."""
-    jobs = _load(WORKFLOW_DIR / "release.yml")["jobs"]
-    callers = _scan_callers(WORKFLOW_DIR / "release.yml")
-    assert len(callers) == 1, (
-        f"release.yml has {len(callers)} jobs calling {SCAN_WORKFLOW_USES} ({callers}); expected exactly "
-        f"one, rendered from `global-artifacts-jobs` in dist-workspace.toml"
-    )
-    scan = callers[0]
-    assert "build-local-artifacts" in _needs(jobs[scan]), (
-        f"release.yml `{scan}` needs {_needs(jobs[scan])}: without `build-local-artifacts` it runs "
-        f"beside the build and scans no binary (that is the `local-artifacts-jobs` render)"
-    )
-    assert scan in _needs(jobs["host"]), f"release.yml `host` needs {_needs(jobs['host'])}, not `{scan}`"
-    clause = f"(needs.{scan}.result == 'skipped' || needs.{scan}.result == 'success')"
-    assert clause in str(jobs["host"].get("if", "")), (
-        f"release.yml `host.if` does not read `{scan}`'s result, so an `always()` host "
-        f"would publish after a failed scan: {jobs['host'].get('if')}"
-    )
-
-
 def test_the_scan_workflow_cannot_pass_by_skipping() -> None:
     """`host` accepts a `skipped` scan, so the scan must never be able to skip or soften itself."""
     document = _load(WORKFLOW_DIR / "scan-binaries.yml")
@@ -2654,74 +2633,6 @@ def test_the_scan_workflow_cannot_pass_by_skipping() -> None:
     assert f"{PROVENANCE_CHECK} --scan" in body and '--min-files "$MIN_FILES"' in body, body
     assert f"{PROVENANCE_CHECK} --exec" in body, body
     assert f"{PROVENANCE_CHECK} --link" in body and '--min-files "$LINK_MIN_FILES"' in body, body
-
-
-def test_the_release_scan_floor_is_one_binary_per_dist_target() -> None:
-    """cargo-dist passes the scan only `plan`, so the input defaults ARE the release's floor."""
-    import tomllib
-
-    targets = tomllib.loads((ROOT / "dist-workspace.toml").read_text(encoding="utf-8"))["dist"]["targets"]
-    assert _scan_input_default("min-files") == len(targets), (
-        f"scan-binaries.yml `min-files` defaults to {_scan_input_default('min-files')}, but "
-        f"dist-workspace.toml builds {len(targets)} targets — a missing binary would pass the floor"
-    )
-    assert _scan_input_default("extract") is True
-    assert _scan_input_default("artifact-pattern") == "artifacts-build-local-*"
-
-
-def test_the_release_link_floor_is_one_binary_per_linux_dist_target() -> None:
-    """The link check runs on cargo-dist archives only, so its reader floor is the release's Linux target count."""
-    import tomllib
-
-    targets = tomllib.loads((ROOT / "dist-workspace.toml").read_text(encoding="utf-8"))["dist"]["targets"]
-    linux = [target for target in targets if "-unknown-linux-" in target]
-    assert _scan_input_default("link-min-files") == len(linux), (
-        f"scan-binaries.yml `link-min-files` defaults to {_scan_input_default('link-min-files')}, but "
-        f"dist-workspace.toml builds {len(linux)} Linux targets {linux} — a missing one would pass the floor"
-    )
-
-
-def test_deploy_dev_publish_needs_the_provenance_scan() -> None:
-    """S-024: builds → `scan-binaries` → publish; a marker in any staged binary skips the publish."""
-    jobs = _load(WORKFLOW_DIR / "deploy-dev.yml")["jobs"]
-    callers = _scan_callers(WORKFLOW_DIR / "deploy-dev.yml")
-    assert callers, f"deploy-dev.yml has no job calling {SCAN_WORKFLOW_USES}"
-    assert any(caller in _needs(jobs["publish"]) for caller in callers), (
-        f"deploy-dev.yml `publish` needs {_needs(jobs['publish'])}, none of which is a scan job ({callers})"
-    )
-    builds = sorted(name for name in jobs if name.startswith("build-"))
-    targets = json.loads(jobs["publish"]["with"]["targets"])
-    for caller in callers:
-        assert set(builds) <= set(_needs(jobs[caller])), f"`{caller}` needs {_needs(jobs[caller])}, not every {builds}"
-        with_ = jobs[caller].get("with") or {}
-        assert with_.get("min-files") == len(targets), (
-            f"`{caller}` floors the scan at {with_.get('min-files')} binaries; `publish` pushes {len(targets)} targets"
-        )
-        assert with_.get("extract") is False, "deploy-dev uploads raw binaries, not archives"
-
-
-def test_oci_publish_execs_the_provenance_check_before_publishing() -> None:
-    """The native binary that drives the push must itself report release provenance."""
-    steps = _run_steps(_load(WORKFLOW_DIR / "oci-publish.yml")["jobs"]["publish"])
-    execs = [index for index, run in steps if f"{PROVENANCE_CHECK} --exec" in run]
-    pushes = [index for index, run in steps if "ocx package push" in run]
-    assert execs, "oci-publish.yml never runs `release_provenance_check.py --exec`"
-    assert pushes and min(execs) < min(pushes), f"--exec at step {execs}, push at step {pushes}"
-
-
-def test_oci_publish_bare_download_is_the_scanned_set() -> None:
-    """S2: the bare path publishes only what deploy-dev's scan read. Without a `pattern`,
-    `download-artifact` fetches every artifact of the run, so any other upload would be
-    staged under `dist/` and pushed without ever having been scanned."""
-    steps = _load(WORKFLOW_DIR / "oci-publish.yml")["jobs"]["publish"]["steps"]
-    [download] = [step for step in steps if step.get("name") == "Download bare-binary artifacts"]
-    jobs = _load(WORKFLOW_DIR / "deploy-dev.yml")["jobs"]
-    callers = _scan_callers(WORKFLOW_DIR / "deploy-dev.yml")
-    scanned = {(jobs[caller].get("with") or {}).get("artifact-pattern") for caller in callers}
-    assert scanned == {"ocx-*"}, f"deploy-dev.yml scans {scanned}"
-    assert (download.get("with") or {}).get("pattern") in scanned, (
-        f"oci-publish.yml downloads pattern {(download.get('with') or {}).get('pattern')!r}; the scan read {scanned}"
-    )
 
 
 def test_deep_does_not_scan_the_bazel_built_binaries() -> None:
@@ -3452,8 +3363,8 @@ def test_the_permission_edge_reader_reds_a_caller_that_grants_too_little(
 
 def test_every_caller_grants_the_union_of_what_the_workflow_it_calls_asks_for() -> None:
     """The release readiness gate calls `acceptance.yml`, `scan-binaries.yml` and
-    `shell-activation-deep.yml`, each asking `contents: read`; cargo-dist's `release.yml` grants
-    `custom-docker-publish` what `docker-publish.yml`'s `build` job asks for, `artifact-metadata`
+    `shell-activation-deep.yml`, each asking `contents: read`; `release.yml` grants
+    `post-docker` what `docker-publish.yml`'s `build` job asks for, `artifact-metadata`
     included (once a known gap: the next tag would have failed at startup)."""
     documents = _documents()
     edges = _call_edges(documents)
@@ -3470,18 +3381,12 @@ def test_every_caller_grants_the_union_of_what_the_workflow_it_calls_asks_for() 
 
 
 # ---------------------------------------------------------------------------
-# Release readiness: the gate a tag needs, on the bytes cargo-dist would publish
+# Release readiness: the gate a release needs, on the bytes release.yml publishes
 # ---------------------------------------------------------------------------
 
 READINESS_GATE = WORKFLOW_DIR / "readiness-gate.yml"
 RELEASE_WORKFLOW = WORKFLOW_DIR / "release.yml"
-DIST_INSTALLER = re.compile(r"cargo-dist/releases/download/v([0-9.]+)/cargo-dist-installer")
-
-
-def _dist_config() -> dict:
-    import tomllib
-
-    return tomllib.loads((ROOT / "dist-workspace.toml").read_text(encoding="utf-8"))["dist"]
+BACKFILL_WORKFLOW = WORKFLOW_DIR / "backfill.yml"
 
 
 def _readiness_matrix(job: str) -> list[dict]:
@@ -3537,9 +3442,8 @@ def _template_owned(path: Path) -> bool:
 def test_every_upload_replaces_its_own_earlier_copy() -> None:
     """A failed job is rerun in place and a rerun-all repeats every upload; either one fails on the
     second copy of a name unless the upload replaces the first. Exempt: a file whose first line is the
-    conventions template's banner (changed upstream, not here) and `release.yml` (cargo-dist writes it
-    and `dist generate --check` fails a hand edit)."""
-    swept = _documents([path for path in WORKFLOWS if path.name not in GENERATED_WORKFLOWS and not _template_owned(path)])
+    conventions template's banner (changed upstream, not here)."""
+    swept = _documents([path for path in WORKFLOWS if not _template_owned(path)])
     for action in sorted((ROOT / ".github" / "actions").glob("*/action.yml")):
         if not _template_owned(action):
             steps = _load(action)["runs"].get("steps") or []
@@ -3564,47 +3468,6 @@ def test_release_readiness_publishes_nothing() -> None:
         for step in job.get("steps") or []:
             uses = str(step.get("uses", ""))
             assert "action-gh-release" not in uses and "login-action" not in uses, f"`{name}` uses {uses}"
-
-
-def test_release_readiness_builds_every_dist_target_and_tests_six_platforms() -> None:
-    targets = _dist_config()["targets"]
-    built = sorted(entry["target"] for entry in _readiness_matrix("build"))
-    assert built == sorted(targets), f"release-readiness.yml builds {built}, dist-workspace.toml builds {sorted(targets)}"
-    expected = {
-        "x86_64-unknown-linux-gnu": ("ubuntu-latest", "linux"),
-        "aarch64-unknown-linux-gnu": ("ubuntu-24.04-arm", "linux"),
-        "aarch64-apple-darwin": ("macos-latest", "macos"),
-        "x86_64-apple-darwin": ("macos-15-intel", "macos"),
-        "x86_64-pc-windows-msvc": ("windows-latest", "windows"),
-        "aarch64-pc-windows-msvc": ("windows-11-arm", "windows"),
-    }
-    jobs = _load(RELEASE_READINESS)["jobs"]
-    acceptance = _readiness_matrix("acceptance")
-    assert {entry["target"]: (entry["os"], entry["limits"]) for entry in acceptance} == {
-        target: (os_label, f"test/limits/{kind}-release") for target, (os_label, kind) in expected.items()
-    }, acceptance
-    assert {entry["target"]: entry["os"] for entry in _readiness_matrix("stage")} == {t: v[0] for t, v in expected.items()}
-    for entry in acceptance:
-        assert entry["no-docker"] is (not entry["os"].startswith("ubuntu")), entry
-    call = jobs["acceptance"]
-    assert call["uses"] == "./.github/workflows/acceptance.yml", call.get("uses")
-    assert call["with"]["release-binary"] is True, "the shards must run with OCX_TEST_RELEASE_BINARY=1"
-    assert call["with"]["binary"] == "artifact:readiness-bin-${{ matrix.target }}", call["with"]["binary"]
-    assert call["with"]["limits-dir"] == "${{ matrix.limits }}", call["with"]["limits-dir"]
-    assert set(_needs(call)) == {"stage", "scan"}, _needs(call)
-    assert jobs["scan"]["uses"] == SCAN_WORKFLOW_USES and "build" in _needs(jobs["scan"])
-
-
-def test_release_builds_windows_arm64_natively_on_the_runner_readiness_tests_it_on() -> None:
-    """dist cross-builds (xwin, on ubuntu) every target without a `github-custom-runners` entry, so
-    the zip readiness executes natively on `windows-11-arm` would not be the zip `release.yml` ships.
-    `release.yml` reads its build runners from `dist plan` at run time, so the config is the source."""
-    target = "aarch64-pc-windows-msvc"
-    readiness = {entry["target"]: entry["runner"] for entry in _readiness_matrix("build")}[target]
-    entry = _dist_config().get("github-custom-runners", {}).get(target)
-    assert isinstance(entry, dict), f"dist-workspace.toml has no `github-custom-runners.{target}` table: {entry!r}"
-    assert entry.get("runner") == readiness, f"release builds {target} on {entry.get('runner')!r}, readiness on {readiness!r}"
-    assert entry.get("host") == target, f"host {entry.get('host')!r}: dist cross-builds unless the runner's host is {target}"
 
 
 # The `[[tool]]` rows of ocx.lock are the leaves a platform can install; a target maps onto
@@ -3673,15 +3536,8 @@ def test_the_acceptance_shard_loads_the_whole_project_unless_given_a_toolchain_g
     )
 
 
-def test_the_release_gate_installs_the_dist_version_the_config_pins() -> None:
-    version = _dist_config()["cargo-dist-version"]
-    for workflow in (RELEASE_WORKFLOW, WORKFLOW_DIR / "verify-release-ci.yml", RELEASE_READINESS):
-        found = set(DIST_INSTALLER.findall(workflow.read_text(encoding="utf-8")))
-        assert found == {version}, f"{workflow.name} installs dist {sorted(found)}, dist-workspace.toml pins {version}"
-
-
 # The verdict step's script, run for real: each case is a set of `needs` results the gate could meet.
-_GO = dict.fromkeys(("PLAN", "BUILD", "SCAN", "STAGE", "ACCEPTANCE", "SHELL_ACTIVATION"), "success")
+_GO = dict.fromkeys(("PLAN", "CROSS", "ASSETS", "SCAN", "STAGE", "ACCEPTANCE", "SHELL_ACTIVATION"), "success")
 
 
 def _verdict(tmp_path: Path, **overrides: str) -> tuple[int, str]:
@@ -3735,145 +3591,9 @@ def test_a_bypass_without_a_reason_is_red(tmp_path: Path, reason: str) -> None:
 
 def test_every_test_job_of_the_gate_skips_under_bypass() -> None:
     jobs = _load(RELEASE_READINESS)["jobs"]
-    for name in ("plan", "build", "stage", "acceptance", "shell-activation-deep"):
+    for name in ("plan", "cross", "assets", "stage", "acceptance", "shell-activation-deep"):
         assert "!inputs.bypass" in str(jobs[name].get("if")), f"`{name}` still runs under bypass: {jobs[name].get('if')}"
-    assert "if" not in jobs["scan"], "scan skips through `needs: build`; an `if:` of its own is a second switch"
-
-
-def test_the_readiness_gate_workflow_runs_the_script_on_the_tagged_commit() -> None:
-    document = _load(READINESS_GATE)
-    on = _on(READINESS_GATE)
-    assert set(on) == {"workflow_call", "workflow_dispatch"}, sorted(on)
-    assert "plan" in on["workflow_call"]["inputs"], "cargo-dist passes `plan` to every custom job"
-    assert on["workflow_dispatch"]["inputs"]["sha"]["type"] == "string"
-    assert document["permissions"] == {"contents": "read", "actions": "read"}, document["permissions"]
-    (job,) = document["jobs"].values()
-    run = " ".join(step.get("run", "") for step in job["steps"])
-    assert 'scripts/release_readiness_gate.py --sha "$SHA"' in run, run
-    assert job["steps"][-1]["env"]["SHA"] == "${{ inputs.sha || github.sha }}", job["steps"][-1]["env"]
-    for step in job["steps"]:
-        assert "continue-on-error" not in step and "|| true" not in step.get("run", ""), f"step {step.get('name')} can pass a red gate"
-    assert "if" not in job, "a skipped gate reads as a pass to `host`"
-
-
-def test_release_host_needs_the_readiness_gate() -> None:
-    """Red readiness-gate -> `host` never runs -> nothing is released."""
-    config = _dist_config()
-    assert config["local-artifacts-jobs"] == ["./verify-version", "./readiness-gate"], config.get("local-artifacts-jobs")
-    assert "plan-jobs" not in config, (
-        f"`plan-jobs` is {config.get('plan-jobs')}: dist makes every job wait on a plan job, and `host` reads their skip as a pass"
-    )
-    assert config["github-custom-job-permissions"]["readiness-gate"] == {"contents": "read", "actions": "read"}
-    jobs = _load(RELEASE_WORKFLOW)["jobs"]
-    gate = "custom-readiness-gate"
-    assert jobs[gate]["uses"] == "./.github/workflows/readiness-gate.yml", jobs[gate]
-    assert jobs[gate]["permissions"] == {"contents": "read", "actions": "read"}, jobs[gate]["permissions"]
-    assert gate in _needs(jobs["host"]), f"release.yml `host` needs {_needs(jobs['host'])}, not `{gate}`"
-    clause = f"(needs.{gate}.result == 'skipped' || needs.{gate}.result == 'success')"
-    assert clause in str(jobs["host"].get("if", "")), f"`host.if` does not read `{gate}`'s result: {jobs['host'].get('if')}"
-    assert gate in _needs(jobs["custom-scan-binaries"]), "the scan must not run after a red readiness gate"
-    assert _needs(jobs[gate]) == ["plan"], f"`{gate}` needs {_needs(jobs[gate])}: a failed prerequisite would skip it, and `host` accepts a skip"
-
-
-#: The `if:` dist renders on a `local-artifacts-jobs` entry: it runs for a publishing tag (or an
-#: upload-mode pull request) and is skipped otherwise. Any other `if:` on a release gate, `false`
-#: included, skips it on the tag it exists to check, and `host` reads that skip as a pass.
-PUBLISH_PREDICATE = (
-    "${{ needs.plan.outputs.publishing == 'true' || fromJson(needs.plan.outputs.val).ci.github.pr_run_mode == 'upload' }}"
-)
-RELEASE_GATES = ("custom-verify-version", "custom-readiness-gate")
-
-
-def _host_clause(need: str) -> str:
-    if need == "plan":
-        return "needs.plan.result == 'success'"
-    return f"(needs.{need}.result == 'skipped' || needs.{need}.result == 'success')"
-
-
-def _host_condition_findings(jobs: dict) -> list[str]:
-    """Needs of `host` whose result `host.if` ignores, and release gates not running on the publish predicate."""
-    condition = str(jobs["host"].get("if", ""))
-    findings = [
-        f"`host.if` does not read `{need}`: {_host_clause(need)!r} is missing"
-        for need in _needs(jobs["host"])
-        if _host_clause(need) not in condition
-    ]
-    return findings + [
-        f"`{gate}` has `if: {jobs[gate].get('if')!r}`, not the publish predicate"
-        for gate in RELEASE_GATES
-        if jobs[gate].get("if") != PUBLISH_PREDICATE
-    ]
-
-
-def _drop_verify_version_from_host_if(jobs: dict) -> None:
-    clause = f" && {_host_clause('custom-verify-version')}"
-    assert clause in jobs["host"]["if"], "the clause to plant the defect by removing is not in host.if"
-    jobs["host"]["if"] = jobs["host"]["if"].replace(clause, "")
-
-
-def _verify_version_never_runs(jobs: dict) -> None:
-    assert jobs["custom-verify-version"]["if"] == PUBLISH_PREDICATE
-    jobs["custom-verify-version"]["if"] = False  # YAML `if: false` loads as a bool
-
-
-@pytest.mark.parametrize("mutate", [_drop_verify_version_from_host_if, _verify_version_never_runs], ids=lambda f: f.__name__)
-def test_the_release_condition_reader_reds_a_gate_host_no_longer_reads(mutate) -> None:
-    jobs = copy.deepcopy(_load(RELEASE_WORKFLOW)["jobs"])
-    assert not _host_condition_findings(jobs), "the unmutated copy must be clean for the red below to mean anything"
-    mutate(jobs)
-    findings = _host_condition_findings(jobs)
-    assert findings and all("custom-verify-version" in finding for finding in findings), findings
-
-
-def test_no_job_upstream_of_host_can_fail_into_a_skip() -> None:
-    """`host.if` reads a `skipped` need as a pass, and GitHub skips a job whose own need failed.
-    So a job `host` waits on only through another job (a `plan-jobs` entry, which dist makes every
-    job wait on) turns its own red into a skipped chain and `host` publishes. Every job upstream of
-    `host` must be one `host` reads itself, apart from `plan`, which `host` requires to succeed."""
-    jobs = _load(RELEASE_WORKFLOW)["jobs"]
-    direct = set(_needs(jobs["host"]))
-    assert set(RELEASE_GATES) <= direct, sorted(direct)
-    findings = _host_condition_findings(jobs)
-    assert not findings, f"{findings}: `host` publishes past a red need, or a gate never runs on the tag it checks"
-    upstream: set[str] = set()
-    pending = list(direct)
-    while pending:
-        for need in _needs(jobs[pending.pop()]):
-            if need not in upstream:
-                upstream.add(need)
-                pending.append(need)
-    assert "plan" in upstream, f"walked {sorted(upstream)} and never reached `plan`: the reader stopped early"
-    hidden = sorted(upstream - direct - {"plan"})
-    assert not hidden, (
-        f"release.yml jobs {hidden} sit upstream of `host` without being in its `needs`: when one fails, "
-        f"its dependents are skipped, `host` accepts a skip, and publishes"
-    )
-
-
-def test_every_input_release_yml_passes_is_declared_by_the_workflow_it_calls() -> None:
-    """cargo-dist hands `plan` to every `local-artifacts-jobs` caller; a callee that does not declare
-    the input fails the run at startup, before any job, so no tag would build."""
-    documents = dict(_documents())
-    callers = 0
-    for name, job in documents["release.yml"]["jobs"].items():
-        callee = _local_callee(job)
-        if callee is None:
-            continue
-        callers += 1
-        triggers = documents[callee].get("on", documents[callee].get(True))
-        declared = set((triggers["workflow_call"] or {}).get("inputs") or {})
-        undeclared = sorted(set(job.get("with") or {}) - declared)
-        assert not undeclared, f"release.yml `{name}` passes {undeclared} to {callee}, which declares {sorted(declared)}"
-    assert callers >= 6, f"release.yml has {callers} callers of a repo workflow; the reader lost some"
-
-
-def test_the_docker_publish_grant_covers_what_the_called_workflow_asks() -> None:
-    asked = _load(WORKFLOW_DIR / "docker-publish.yml")["jobs"]["build"]["permissions"]
-    granted = _load(RELEASE_WORKFLOW)["jobs"]["custom-docker-publish"]["permissions"]
-    assert {scope for scope, level in asked.items() if level == "write"} <= {s for s, v in granted.items() if v == "write"}, (
-        asked,
-        granted,
-    )
+    assert "if" not in jobs["scan"], "scan skips through `needs: assets`; an `if:` of its own is a second switch"
 
 
 def test_claude_write_answers_only_what_the_template_responder_does_not() -> None:
@@ -3912,3 +3632,440 @@ def test_claude_write_answers_only_what_the_template_responder_does_not() -> Non
     assert checkout["with"]["persist-credentials"] is False, (
         "claude-write.yml's checkout keeps its token; the action replaces it before pushing, so keep none"
     )
+
+
+# ---------------------------------------------------------------------------
+# Signed releases: the properties release.yml and backfill.yml rest on. Each sweep returns
+# its findings over a list of documents, so a test shows it red on a mutated copy of the
+# real text and green on the real files; a mutation that does not land fails the test.
+# ---------------------------------------------------------------------------
+
+CROSS_TASKFILE = ROOT / "taskfiles" / "cross.taskfile.yml"
+RELEASE_PUBLISH = "release.yml:publish"
+#: The jobs that may sign or attest: a called workflow signs under its own file's identity,
+#: so only these three (the sdkgen `sign` job runs from main by design) hold a signing step.
+SIGNING_JOBS = frozenset({RELEASE_PUBLISH, "backfill.yml:backfill", "sdkgen-publish.yml:sign"})
+_SIGNS = re.compile(r"ocx package (?:sign|attest)\b|publish_ocx_package\.sh|backfill_release\.py|--sign\b|--sbom\b")
+_MODES = ("release", "candidate", "dev")
+
+
+def _mutated(name: str, old: str, new: str, count: int = 1) -> list[tuple[str, dict]]:
+    """The real documents with `old` replaced by `new` (`count` times, -1 for all) in the text of workflow `name`."""
+    text = (WORKFLOW_DIR / name).read_text(encoding="utf-8")
+    assert old in text, f"mutation did not land: {old!r} is not in {name}"
+    return [(n, yaml.safe_load(text.replace(old, new, count)) if n == name else d) for n, d in _documents()]
+
+
+def _job_runs(job: dict) -> str:
+    return "\n".join(
+        line for step in job.get("steps") or [] for line in str(step.get("run", "")).splitlines() if not line.lstrip().startswith("#")
+    )
+
+
+def _granted(document: dict, job: dict, scope: str) -> str | None:
+    return (job.get("permissions", document.get("permissions")) or {}).get(scope)
+
+
+def _signing_findings(documents: list[tuple[str, dict]]) -> list[str]:
+    findings, seen = [], set()
+    for where, document, job in _jobs(documents):
+        if not _SIGNS.search(_job_runs(job)):
+            continue
+        seen.add(where)
+        if where not in SIGNING_JOBS:
+            findings.append(f"{where} signs or attests but is not one of {sorted(SIGNING_JOBS)}")
+        elif _granted(document, job, "id-token") != "write":
+            findings.append(f"{where} signs without `id-token: write`")
+    findings += [f"{where} is allowlisted but runs no signing step (the reader stopped matching)" for where in sorted(SIGNING_JOBS - seen)]
+    return findings
+
+
+def test_only_the_publish_backfill_and_sdkgen_sign_jobs_sign() -> None:
+    assert _signing_findings(_documents()) == []
+
+
+@pytest.mark.parametrize(
+    ("name", "old", "new"),
+    [
+        pytest.param("release.yml", "      - name: Create the tag and the release\n", "      - run: ocx package sign -p linux/amd64 x\n      - name: Create the tag and the release\n", id="a-sign-call-in-github-release"),
+        pytest.param("release.yml", "      id-token: write\n    steps:\n      - name: Checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Install the release ocx\n        uses: ./.github/actions/release-ocx\n      - name: Package, push", "    steps:\n      - name: Checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Install the release ocx\n        uses: ./.github/actions/release-ocx\n      - name: Package, push", id="publish-loses-id-token"),
+        pytest.param("backfill.yml", "python3 scripts/backfill_release.py", "echo", id="backfill-stops-signing"),
+    ],
+)
+def test_the_signing_sweep_reds_a_stray_sign_a_missing_oidc_grant_and_a_reader_that_stopped(name: str, old: str, new: str) -> None:
+    assert _signing_findings(_mutated(name, old, new)), f"mutating {name} left the signing sweep green"
+
+
+def _release_env() -> dict[str, str]:
+    return {k: str(v) for k, v in _load(RELEASE_WORKFLOW)["env"].items()}
+
+
+def _plan_script(documents: list[tuple[str, dict]]) -> str:
+    steps = dict(documents)["release.yml"]["jobs"]["plan"]["steps"]
+    return next(s["run"] for s in steps if s.get("id") == "plan")
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=repo, check=True, capture_output=True, encoding="utf-8")
+
+
+def _run_plan(script: str, tmp: Path, **env: str) -> tuple[int, dict[str, str]]:
+    """Run the `plan` step in a repository that holds the tag `v0.9.0`; return exit code and `GITHUB_OUTPUT`."""
+    repo = tmp / "repo"
+    if not repo.exists():
+        repo.mkdir(parents=True)
+        _git(repo, "init", "-q")
+        _git(repo, "commit", "-q", "--allow-empty", "-m", "x")
+        _git(repo, "tag", "v0.9.0")
+        (tmp / "bin").mkdir()
+        cliff = tmp / "bin" / "git-cliff"
+        cliff.write_text("#!/bin/sh\necho v0.10.0\n", encoding="utf-8")
+        cliff.chmod(0o755)
+    output = tmp / "out"
+    output.write_text("", encoding="utf-8")
+    (tmp / "plan.sh").write_text(script, encoding="utf-8")
+    environment = {
+        "PATH": f"{tmp / 'bin'}:{os.environ['PATH']}",
+        "HOME": str(tmp),
+        **_release_env(),
+        "GITHUB_OUTPUT": str(output),
+        "GITHUB_REF": "refs/heads/main",
+        "REPOSITORY_ID_ACTUAL": _release_env()["REPOSITORY_ID"],
+        **env,
+    }
+    done = subprocess.run(["bash", str(tmp / "plan.sh")], cwd=repo, env=environment, capture_output=True, encoding="utf-8", check=False)
+    pairs = [line.partition("=") for line in output.read_text(encoding="utf-8").splitlines()]
+    return done.returncode, {k: v for k, _, v in pairs}
+
+
+def test_the_plan_step_plans_a_release_a_candidate_and_a_dev_build(tmp_path: Path) -> None:
+    script = _plan_script(_documents())
+    code, out = _run_plan(script, tmp_path, MODE="release", VERSION="0.10.0")
+    assert code == 0 and re.fullmatch(r"0\.10\.0_\d{14}", out["tag"]), (code, out)
+    assert (out["semver"], out["git_tag"], out["package"]) == ("0.10.0", "v0.10.0", "ghcr.io/ocx-sh/ocx/cli")
+    code, out = _run_plan(script, tmp_path, MODE="candidate", VERSION="0.10.0-rc1")
+    assert code == 0 and re.fullmatch(r"0\.10\.0-rc1_\d{14}", out["tag"]), (code, out)
+    assert out["package"] == "ghcr.io/ocx-sh/ocx/cli" and out["git_tag"] == "v0.10.0-rc1"
+    code, out = _run_plan(script, tmp_path, MODE="dev", VERSION="", GITHUB_REF="refs/heads/feature")
+    assert code == 0 and re.fullmatch(r"0\.10\.0-dev_\d{14}", out["tag"]), (code, out)
+    assert re.fullmatch(r"0\.10\.0-dev\+\d{14}", out["semver"]) and out["git_tag"] == "", out
+    assert out["package"] == "ghcr.io/ocx-sh/dev/cli", out
+
+
+_PLAN_REFUSALS = {
+    "a-wrong-ref": ('[[ "$GITHUB_REF" != "refs/heads/main" ]]', "false", {"MODE": "release", "VERSION": "0.10.0", "GITHUB_REF": "refs/heads/feature"}),
+    "a-wrong-repository": ('[[ "$REPOSITORY_ID_ACTUAL" != "$REPOSITORY_ID" ]]', "false", {"MODE": "release", "VERSION": "0.10.0", "REPOSITORY_ID_ACTUAL": "1"}),
+    "an-existing-tag": ('git rev-parse --quiet --verify "refs/tags/v${VERSION}" >/dev/null', "false", {"MODE": "release", "VERSION": "0.9.0"}),
+    "an-unknown-mode": ("echo \"::error::mode '$MODE' is not release, candidate or dev\"\n    exit 1", "semver=x tag=x package=x git_tag=x", {"MODE": "publish", "VERSION": "0.10.0"}),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_PLAN_REFUSALS))
+def test_the_plan_step_refuses_what_it_guards_and_a_deleted_guard_lets_it_through(case: str, tmp_path: Path) -> None:
+    guard, replacement, env = _PLAN_REFUSALS[case]
+    script = _plan_script(_documents())
+    assert guard in script, f"mutation did not land: {guard!r} is not in the plan step"
+    code, _ = _run_plan(script, tmp_path / "real", **env)
+    assert code != 0, f"the real plan step accepted {case}"
+    code, _ = _run_plan(script.replace(guard, replacement, 1), tmp_path / "mutated", **env)
+    assert code == 0, f"deleting the {case} guard still refused: the test cannot tell the guard from another failure"
+
+
+def _eval_if(expression: object, mode: str, results: dict[str, str] | None = None) -> bool:
+    """A job `if:` over `inputs.mode` and `needs.<job>.result`, the only contexts release.yml's use."""
+    body = re.fullmatch(r"\$\{\{(.*)\}\}", str(expression).strip(), re.S)
+    text = " ".join((body.group(1) if body else str(expression)).split())
+    text = text.replace("!cancelled()", "True").replace("&&", " and ").replace("||", " or ")
+    text = re.sub(r"!(?!=)", " not ", text)
+    text = re.sub(r"needs\.([\w-]+)\.result", r"RES['\1']", text).replace("inputs.mode", "MODE")
+    return bool(eval(text, {"__builtins__": {}}, {"MODE": mode, "RES": results or {}, "true": True, "false": False}))  # noqa: S307 - the expression is a workflow file in this repo
+
+
+_RELEASE_ONLY = ("prune", "post-docker", "post-sdkgen")
+_NEVER_ON_DEV = ("github-release", "announce", *_RELEASE_ONLY)
+
+
+def _dev_isolation_findings(documents: list[tuple[str, dict]]) -> list[str]:
+    document = dict(documents)["release.yml"]
+    jobs = document["jobs"]
+    findings = []
+    if not re.match(r"^ghcr\.io/ocx-sh/dev/", str(document["env"]["PACKAGE_DEV"])):
+        findings.append(f"PACKAGE_DEV is {document['env']['PACKAGE_DEV']!r}, not under ghcr.io/ocx-sh/dev/")
+    for name in _NEVER_ON_DEV:
+        if _eval_if(jobs[name].get("if", "true"), "dev"):
+            findings.append(f"`{name}` runs in dev mode")
+    for name in _RELEASE_ONLY:
+        if _eval_if(jobs[name].get("if", "true"), "candidate"):
+            findings.append(f"`{name}` runs for a candidate")
+    for mode in ("release", "candidate"):
+        if _eval_if(jobs["prune-dev"]["if"], mode):
+            findings.append(f"`prune-dev` runs in {mode} mode")
+    if not _eval_if(jobs["prune-dev"]["if"], "dev"):
+        findings.append("`prune-dev` never runs in dev mode")
+    for name, job in jobs.items():
+        text = _job_runs(job) + str(job.get("env", ""))
+        if name == "prune-dev" and re.search(r"PACKAGE_RELEASE|PACKAGE_LOGICAL|ocx\.sh/ocx", text):
+            findings.append("`prune-dev` names the release package")
+    dev_arm = re.search(r"\n\s+dev\)\n(.*?);;", _plan_script(documents), re.S)
+    if not dev_arm or '"$PACKAGE_DEV"' not in dev_arm.group(1) or "PACKAGE_RELEASE" in dev_arm.group(1):
+        findings.append("the dev arm of `plan` does not choose PACKAGE_DEV alone")
+    return findings
+
+
+def test_a_dev_build_touches_nothing_but_the_dev_package() -> None:
+    assert _dev_isolation_findings(_documents()) == []
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        pytest.param("PACKAGE_DEV: ghcr.io/ocx-sh/dev/cli", "PACKAGE_DEV: ghcr.io/ocx-sh/ocx/cli", id="dev-package-outside-dev"),
+        pytest.param("  github-release:\n    name: GitHub release\n    if: ${{ inputs.mode != 'dev' }}", "  github-release:\n    name: GitHub release\n    if: ${{ true }}", id="github-release-runs-on-dev"),
+        pytest.param("    name: Docker images\n    if: ${{ inputs.mode == 'release' }}", "    name: Docker images\n    if: ${{ inputs.mode != 'dev' }}", id="docker-runs-for-a-candidate"),
+        pytest.param('              package="$PACKAGE_DEV"', '              package="$PACKAGE_RELEASE"', id="dev-arm-picks-the-release-package"),
+    ],
+)
+def test_the_dev_isolation_sweep_reds_each_way_a_dev_build_could_reach_the_release_package(old: str, new: str) -> None:
+    assert _dev_isolation_findings(_mutated("release.yml", old, new))
+
+
+def _force_findings(documents: list[tuple[str, dict]]) -> list[str]:
+    findings, forced = [], []
+    for where, _, job in _jobs(documents):
+        for line in _job_runs(job).splitlines():
+            if "package prune" in line and re.search(r"--force\b", line):
+                forced.append(where)
+                if where != "release.yml:prune-dev":
+                    findings.append(f"{where} prunes with --force")
+                elif '"$PACKAGE"' not in line or str(job["steps"][-1]["env"]["PACKAGE"]) != "${{ env.PACKAGE_DEV }}":
+                    findings.append(f"{where} forces a prune of something other than PACKAGE_DEV")
+    if not forced:
+        findings.append("no `package prune --force` anywhere (the reader stopped matching)")
+    return findings
+
+
+def test_only_the_dev_prune_forces_and_only_on_the_dev_package() -> None:
+    assert _force_findings(_documents()) == []
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        pytest.param("ocx package prune --forge github --tags-file \"$RUNNER_TEMP/pruned.txt\" \"$PACKAGE_LOGICAL\"", "ocx package prune --forge github --force --tags-file \"$RUNNER_TEMP/pruned.txt\" \"$PACKAGE_LOGICAL\"", id="release-prune-forces"),
+        pytest.param("PACKAGE: ${{ env.PACKAGE_DEV }}", "PACKAGE: ${{ needs.plan.outputs.package }}", id="dev-prune-package-is-not-pinned-to-dev"),
+    ],
+)
+def test_the_force_sweep_reds_a_forced_release_prune_and_an_unpinned_dev_prune(old: str, new: str) -> None:
+    assert _force_findings(_mutated("release.yml", old, new))
+
+
+_TAG_WRITERS = re.compile(r"\bgh release create\b|\bgit tag\b|\bgit push\b")
+
+
+def _tag_findings(documents: list[tuple[str, dict]]) -> list[str]:
+    findings, creates = [], 0
+    for where, _, job in _jobs(documents):
+        runs = _job_runs(job)
+        if "gh release create" in runs:
+            creates += 1
+            if where != "release.yml:github-release" or "publish" not in _needs(job):
+                findings.append(f"{where} creates the release without `needs: publish`")
+        elif _TAG_WRITERS.search(runs):
+            findings.append(f"{where} creates or moves a tag")
+    jobs = dict(documents)["release.yml"]["jobs"]
+    for name in ("announce", "post-docker", "post-sdkgen"):
+        if "github-release" not in _needs(jobs[name]):
+            findings.append(f"release.yml:{name} does not wait for github-release")
+    if creates != 1:
+        findings.append(f"{creates} jobs run `gh release create`, expected 1")
+    return findings
+
+
+def test_the_tag_and_release_are_created_once_after_the_package_is_signed() -> None:
+    assert _tag_findings(_documents()) == []
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        pytest.param("    needs: [plan, publish]\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write", "    needs: [plan]\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write", id="release-without-publish"),
+        pytest.param("      - name: Plan the build\n        id: plan\n", "      - run: git tag v1\n      - name: Plan the build\n        id: plan\n", id="a-tag-in-plan"),
+        pytest.param("    needs: [plan, publish, github-release]\n    runs-on: ubuntu-latest\n    environment: ocx.sh", "    needs: [plan, publish]\n    runs-on: ubuntu-latest\n    environment: ocx.sh", id="announce-before-the-release"),
+    ],
+)
+def test_the_tag_sweep_reds_a_release_before_signing_a_stray_tag_and_an_early_announce(old: str, new: str) -> None:
+    assert _tag_findings(_mutated("release.yml", old, new))
+
+
+def _cross_targets() -> list[str]:
+    return yaml.safe_load(CROSS_TASKFILE.read_text(encoding="utf-8"))["vars"]["TARGETS"].split()
+
+
+def _asset_triple(target: str) -> str:
+    return target.replace("-pc-windows-gnullvm", "-pc-windows-msvc")
+
+
+_PLATFORM_OF = {"linux": "linux", "apple-darwin": "darwin", "windows": "windows"}
+
+
+def _oci_platform(triple: str) -> str:
+    arch, _, rest = triple.partition("-")
+    os_name = next(v for k, v in _PLATFORM_OF.items() if k in rest)
+    return f"{os_name}/{'amd64' if arch == 'x86_64' else 'arm64'}"
+
+
+def _asset_findings(documents: list[tuple[str, dict]]) -> list[str]:
+    by_name = dict(documents)
+    release = by_name["release.yml"]
+    rows = [line.split() for line in str(release["env"]["PLATFORMS"]).splitlines() if line.strip()]
+    findings = []
+    # The glibc Linux binaries are built and release-tested but never published; every other cross-built triple ships.
+    shipped = {_asset_triple(t) for t in _cross_targets() if not t.endswith("-unknown-linux-gnu")}
+    if {asset for asset, _ in rows} != shipped:
+        findings.append(f"PLATFORMS assets {sorted(a for a, _ in rows)} differ from the cross targets that ship {sorted(shipped)}")
+    findings += [f"{asset} is published as {platform}, not {_oci_platform(asset)}" for asset, platform in rows if platform != _oci_platform(asset)]
+    if len({platform for _, platform in rows}) != len(rows) or len(rows) != 6:
+        findings.append(f"expected six distinct platforms, got {rows}")
+    tested = {_oci_platform(leg["target"]) for leg in by_name["release-readiness.yml"]["jobs"]["acceptance"]["strategy"]["matrix"]["include"]}
+    if tested != {platform for _, platform in rows}:
+        findings.append(f"readiness tests {sorted(tested)}, release publishes {sorted(p for _, p in rows)}")
+    if "*.cdx.json" not in _job_runs(release["jobs"]["github-release"]):
+        findings.append("github-release does not exclude the per-platform `*.cdx.json` predicates")
+    return findings
+
+
+def test_the_published_platforms_are_the_cross_built_ones_readiness_tests_and_the_release_excludes_the_predicates() -> None:
+    assert _asset_findings(_documents()) == []
+
+
+@pytest.mark.parametrize(
+    ("name", "old", "new"),
+    [
+        pytest.param("release.yml", "    aarch64-pc-windows-msvc windows/arm64\n", "", id="a-platform-dropped"),
+        pytest.param("release.yml", "x86_64-apple-darwin darwin/amd64", "x86_64-apple-darwin darwin/arm64", id="a-platform-mislabelled"),
+        pytest.param("release.yml", '[[ "$file" == *.cdx.json ]] || assets+=("$file")', 'assets+=("$file")', id="predicates-published"),
+        pytest.param("release-readiness.yml", "target: aarch64-pc-windows-msvc", "target: aarch64-apple-darwin", id="a-platform-untested"),
+    ],
+)
+def test_the_asset_sweep_reds_a_dropped_platform_a_mislabel_published_predicates_and_an_untested_platform(name: str, old: str, new: str) -> None:
+    assert _asset_findings(_mutated(name, old, new, count=-1))
+
+
+def _caller_input_findings(documents: list[tuple[str, dict]]) -> tuple[list[str], int]:
+    by_name = dict(documents)
+    findings, callers = [], 0
+    for where, _, job in _jobs(documents):
+        callee = _local_callee(job)
+        if callee is None or where.split(":")[0] not in {"release.yml", "backfill.yml"}:
+            continue
+        callers += 1
+        declared = ((by_name[callee].get("on") or by_name[callee].get(True) or {}).get("workflow_call") or {}).get("inputs") or {}
+        passed = set(job.get("with") or {})
+        findings += [f"{where} passes `{key}`, which {callee} does not declare" for key in sorted(passed - set(declared))]
+        findings += [f"{where} omits `{key}`, which {callee} requires" for key, spec in declared.items() if spec.get("required") and "default" not in spec and key not in passed]
+    return findings, callers
+
+
+def test_every_input_release_yml_passes_is_declared_by_the_workflow_it_calls() -> None:
+    findings, callers = _caller_input_findings(_documents())
+    assert callers >= 6, f"read {callers} release.yml callers; it calls six workflows"
+    assert findings == []
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        pytest.param("      tag: ${{ needs.plan.outputs.git_tag }}", "      plan: ${{ needs.plan.outputs.git_tag }}", id="docker-input-renamed"),
+        pytest.param("      version_tag: ${{ needs.plan.outputs.tag }}", "      version: ${{ needs.plan.outputs.tag }}", id="sdkgen-input-renamed"),
+        pytest.param("      sha: ${{ github.sha }}", "      ref: ${{ github.sha }}", id="readiness-input-renamed"),
+    ],
+)
+def test_the_input_sweep_reds_an_input_the_callee_does_not_declare(old: str, new: str) -> None:
+    findings, _ = _caller_input_findings(_mutated("release.yml", old, new))
+    assert findings
+
+
+def _publish_gate_findings(documents: list[tuple[str, dict]]) -> list[str]:
+    jobs = dict(documents)["release.yml"]["jobs"]
+    findings = []
+    if "readiness" not in _needs(jobs["publish"]):
+        findings.append("publish does not need readiness")
+    for mode in _MODES:
+        if _eval_if(jobs["readiness"]["if"], mode) is not (mode != "dev"):
+            findings.append(f"readiness runs in {mode} mode: {jobs['readiness']['if']!r}")
+        for readiness in ("success", "skipped", "failure", "cancelled"):
+            results = {"plan": "success", "build": "success", "scan": "success", "readiness": readiness}
+            expected = readiness == "success" or (mode == "dev" and readiness == "skipped")
+            if _eval_if(jobs["publish"]["if"], mode, results) is not expected:
+                findings.append(f"publish in {mode} mode with readiness {readiness} should be {expected}")
+    for broken in ("plan", "build", "scan"):
+        results = {"plan": "success", "build": "success", "scan": "success", "readiness": "success", broken: "failure"}
+        if _eval_if(jobs["publish"]["if"], "release", results):
+            findings.append(f"publish runs with {broken} failed")
+    return findings
+
+
+def test_publish_waits_for_a_green_readiness_gate_except_on_a_dev_build() -> None:
+    assert _publish_gate_findings(_documents()) == []
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        pytest.param("(inputs.mode == 'dev' && needs.readiness.result == 'skipped')", "needs.readiness.result == 'skipped'", id="skipped-readiness-passes-a-release"),
+        pytest.param("    needs: [plan, readiness, build, scan]", "    needs: [plan, build, scan]", id="publish-does-not-need-readiness"),
+        pytest.param("    name: Readiness gate\n    if: ${{ inputs.mode != 'dev' }}", "    name: Readiness gate\n    if: ${{ inputs.mode == 'release' }}", id="a-candidate-skips-readiness"),
+        pytest.param("      && needs.scan.result == 'success'\n", "", id="a-failed-scan-publishes"),
+    ],
+)
+def test_the_publish_gate_sweep_reds_each_way_an_unready_build_could_publish(old: str, new: str) -> None:
+    assert _publish_gate_findings(_mutated("release.yml", old, new))
+
+
+def _entry_findings(documents: list[tuple[str, dict]]) -> list[str]:
+    by_name = dict(documents)
+    findings = []
+    for name, inputs in (("release.yml", {"mode", "version", "prune_after_days"}), ("backfill.yml", {"tags", "dry_run"})):
+        document = by_name[name]
+        triggers = document.get("on") or document.get(True)
+        if set(triggers) != {"workflow_dispatch"}:
+            findings.append(f"{name} triggers on {sorted(triggers)}, not a dispatch alone")
+        elif set(triggers["workflow_dispatch"]["inputs"]) != inputs:
+            findings.append(f"{name} inputs are {sorted(triggers['workflow_dispatch']['inputs'])}")
+        if document.get("permissions") != {}:
+            findings.append(f"{name} has no top-level `permissions: {{}}`")
+        if str(document["env"].get("REPOSITORY_ID")) != "1171751668":
+            findings.append(f"{name} does not pin the repository id in its env block")
+        findings += [f"{name}:{job} sets REPOSITORY_ID of its own" for job, body in document["jobs"].items() if "REPOSITORY_ID" in (body.get("env") or {})]
+    options = by_name["release.yml"]["on" if "on" in by_name["release.yml"] else True]["workflow_dispatch"]["inputs"]["mode"]["options"]
+    if options != list(_MODES):
+        findings.append(f"release.yml modes are {options}")
+    if by_name["backfill.yml"]["jobs"]["backfill"].get("environment") != "release-backfill":
+        findings.append("backfill's job does not run in the `release-backfill` environment")
+    return findings
+
+
+def test_release_and_backfill_are_dispatch_only_with_no_default_token_and_backfill_waits_for_its_reviewer() -> None:
+    assert _entry_findings(_documents()) == []
+
+
+@pytest.mark.parametrize(
+    ("name", "old", "new"),
+    [
+        pytest.param("backfill.yml", "    environment: release-backfill\n", "", id="backfill-without-its-environment"),
+        pytest.param("backfill.yml", "permissions: {}\n", "permissions:\n  contents: read\n", id="backfill-grants-by-default"),
+        pytest.param("release.yml", "  workflow_dispatch:\n", "  push:\n    branches: [main]\n  workflow_dispatch:\n", id="release-on-push"),
+        pytest.param("release.yml", 'REPOSITORY_ID: "1171751668"', 'REPOSITORY_ID: "1"', id="release-pins-another-repository"),
+    ],
+)
+def test_the_entry_sweep_reds_a_missing_environment_a_default_grant_a_push_trigger_and_a_wrong_repository(name: str, old: str, new: str) -> None:
+    assert _entry_findings(_mutated(name, old, new))
+
+
+def test_the_readiness_gate_builds_the_stamped_cross_binaries_and_tests_six_platforms() -> None:
+    jobs = _load(RELEASE_READINESS)["jobs"]
+    cross = jobs["cross"]
+    assert cross["uses"] == "./.github/workflows/cross.yml" and cross["with"]["stamp"] is True, cross
+    assert _needs(jobs["assets"]) == ["plan", "cross"] and _needs(jobs["acceptance"]) == ["stage", "scan"], (jobs["assets"], jobs["acceptance"])
+    assert len(_readiness_matrix("acceptance")) == 6 and len(_readiness_matrix("stage")) == 6
+    assert {"plan", "cross", "assets", "scan", "stage", "acceptance"} <= set(_needs(jobs["verdict"])), "the verdict must wait for every job"

@@ -81,6 +81,8 @@ jobs:
       stamp: true
       channel: release
       version: ${{ needs.plan.outputs.version }}
+    secrets:
+      BAZEL_CACHE_WRITE_AUTH: ${{ secrets.BAZEL_CACHE_WRITE_AUTH }}
 
   assets:
     name: Release archives

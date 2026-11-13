@@ -154,7 +154,7 @@ PowerShell needs the script compiled to a scriptblock so `-Version` binds to its
 & ([scriptblock]::Create((Invoke-RestMethod 'https://setup.ocx.sh/pwsh'))) -Version 0.5.0
 ```
 
-**Track prereleases.** To follow prereleases instead of stable, use the `next` channel on any per-shell prefix, such as `https://setup.ocx.sh/sh/next` or `https://setup.ocx.sh/pwsh/next`.
+**Install a prerelease.** The installer without a pin installs the newest stable release and never a prerelease. To install a prerelease, pin its exact version, such as `OCX_INSTALL_VERSION=0.6.0-rc.1`.
 
 **Behind a corporate CA.** The `OCX_INSTALL_CA_BUNDLE` env knob points the installer at a corporate root for its own downloads. Export [`OCX_EXTRA_CA_CERTS`][env-ocx-extra-ca-certs] beside it. Then [`ocx self setup`][cmd-self-setup] persists the certificate text as [`extra_ca_certs_pem`][config-extra-ca-certs] in `config.toml`, so every later command trusts it too:
 

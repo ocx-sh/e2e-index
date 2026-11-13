@@ -6437,6 +6437,10 @@ mod tests {
     //                          The audit's production code names no reference at
     //                          all: it asks for `ReadAddressing::Canonical` and
     //                          the seam in this file builds the reference.
+    // - `ocx_announce/src/forge/github_packages.rs`
+    //                        — a test helper keying the stub transport's manifest
+    //                          map by canonical reference (test-only, same shape
+    //                          as the cascade spies); production code names none.
     #[test]
     fn canonical_reference_only_used_in_allowed_files() {
         use std::fs;
@@ -6451,6 +6455,7 @@ mod tests {
             "ocx_package/src/cascade/apply.rs",
             "ocx_package/src/cascade/equivalence.rs",
             "ocx_package/src/prune/tests.rs",
+            "ocx_announce/src/forge/github_packages.rs",
         ];
 
         // One walk for both gates, floored on what it READ. They were two

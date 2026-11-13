@@ -226,7 +226,12 @@ impl TagDeleter for GithubPackagesDeleter<'_> {
         // Roots lead the set. A tag is reported the moment its own version is gone, so a later failure
         // on a platform or referrer version cannot relabel it as untouched.
         for (position, version) in set.iter().enumerate() {
-            self.delete_version(collection, version, repository, first_tag).await?;
+            // A failure names the tag this version carries; a platform or referrer version, the last root's.
+            let label = found
+                .iter()
+                .find(|(_, id)| *id == version.id)
+                .map_or_else(|| found.last().map_or(first_tag, |(tag, _)| *tag), |(tag, _)| *tag);
+            self.delete_version(collection, version, repository, label).await?;
             if position < roots.len() {
                 for (tag, _) in found.iter().filter(|(_, id)| *id == version.id) {
                     confirm_gone(self.client, repository, tag).await?;
@@ -831,6 +836,45 @@ mod tests {
             .expect_err("shared version");
 
         assert!(matches!(error, PruneError::SharedVersion { .. }), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn a_mid_run_denial_names_the_tag_being_deleted_and_states_the_cause_once() {
+        let (a_bytes, a_digest) = index(&[]);
+        let (b_bytes, b_digest) = index(&[&a_digest]);
+        let data = StubTransportData::new();
+        serve(&data, &a_digest, a_bytes);
+        serve(&data, &b_digest, b_bytes);
+        confirm_all_gone(&data, 1);
+        let client = stub_client(&data);
+        let versions = vec![version(7, &a_digest, &["first"]), version(8, &b_digest, &["second"])];
+        let list = route("Organization", versions);
+        let fake = Fake::start(move |method, target| {
+            if method == "DELETE" && target.ends_with("/versions/8") {
+                return (403, r#"{"message":"no"}"#.to_string());
+            }
+            list(method, target)
+        })
+        .await;
+
+        let mut report = DeleteReport::default();
+        let error = deleter(&client, &fake.base)
+            .delete(&plan(&["first", "second"], false), &mut report)
+            .await
+            .expect_err("the second delete is denied");
+
+        let PruneError::DeleteDenied { tag, .. } = &error else {
+            panic!("{error:?}");
+        };
+        assert_eq!(tag, "second", "the first tag was already deleted");
+        let mut chain = Vec::new();
+        let mut cause: Option<&dyn std::error::Error> = std::error::Error::source(&error);
+        while let Some(c) = cause {
+            chain.push(c.to_string());
+            cause = c.source();
+        }
+        let joined = chain.join(" | ");
+        assert_eq!(joined.matches("answered 403").count(), 1, "{joined}");
     }
 
     #[tokio::test]

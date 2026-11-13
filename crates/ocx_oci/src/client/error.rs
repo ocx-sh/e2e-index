@@ -15,7 +15,7 @@ pub enum ClientError {
         slug = "registry_auth_failed",
         summary = "The registry rejected the request's authentication"
     )]
-    Authentication(#[source] Box<dyn std::error::Error + Send + Sync>),
+    Authentication(Box<dyn std::error::Error + Send + Sync>),
     /// Digest mismatch between expected and actual content hash, for manifests and verified blobs.
     #[error("digest mismatch: expected '{expected}', got '{actual}'")]
     #[exit(

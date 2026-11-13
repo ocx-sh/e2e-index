@@ -295,11 +295,12 @@ impl PackageManager {
             signer_rounds(input).await
         } {
             Ok(decision) => decision,
-            // Only an unparseable committed root yields to the opt-out; any other error, a malformed operator policy included, still refuses.
+            // Only an unreadable or unparseable committed root yields to the opt-out; any other error, a malformed operator policy included, still refuses.
             Err(
-                error @ crate::Error::FileStructure(ocx_store::file_structure::error::Error::MalformedRootDocument {
+                error @ (crate::Error::InternalFile(..)
+                | crate::Error::FileStructure(ocx_store::file_structure::error::Error::MalformedRootDocument {
                     ..
-                }),
+                })),
             ) if auto_verify.user_opted_out => {
                 log::debug!("committed index root unreadable for '{resolved}', skipping verification: {error}");
                 self.warn_skipped_once(auto_verify);
@@ -1291,6 +1292,45 @@ mod tests {
         find_golden(&manager, &golden_tag())
             .await
             .expect("unlocked opt-out keeps the fast path");
+    }
+
+    /// A committed root that cannot be read (a directory stands in for the file: the read fails with an I/O
+    /// error other than NotFound, and unlike `chmod 000` that holds for root) or does not parse yields to an
+    /// unlocked opt-out, and still errors without one.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn d13_b_an_unreadable_or_malformed_committed_root_yields_to_the_opt_out_only() {
+        let (_, target) = golden_subject();
+        for unreadable in [true, false] {
+            for user_opted_out in [true, false] {
+                let root = TempDir::new().unwrap();
+                let manager = golden_manager(
+                    root.path(),
+                    StubTransportData::new(),
+                    GoldenScenario {
+                        user_opted_out,
+                        ..GoldenScenario::new(None)
+                    },
+                );
+                let path =
+                    ocx_index::IndexStore::machine_local(manager.file_structure()).root_document_path(REGISTRY, REPO);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                if unreadable {
+                    std::fs::create_dir(&path).unwrap();
+                } else {
+                    std::fs::write(&path, b"{ not json").unwrap();
+                }
+                let outcome = manager.maybe_auto_verify_requested(&target, &target).await;
+                if user_opted_out {
+                    assert!(
+                        !outcome.expect("the opt-out proceeds past the unreadable root"),
+                        "no publisher round ran"
+                    );
+                    assert!(manager.auto_verify().expect("attached").warned.load(Ordering::Relaxed));
+                } else {
+                    outcome.expect_err("without the opt-out the root error stands");
+                }
+            }
+        }
     }
 
     /// An uncovered package under the opt-out stays silent (today's behaviour).

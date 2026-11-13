@@ -7,8 +7,8 @@
 - **Tier:** high
 - **Tier-grammar:** 5
 - **Updated:** 2026-11-13
-- **Active phase:** 1 — wave 1 (contract wave 6a59347a4 merged)
-- **Step:** /hex-execute → wave 1 pipelines
+- **Active phase:** 3 — wave 3 (P-FIX, P-DOCS); waves 0–2 merged
+- **Step:** /hex-execute → wave 3 pipelines
 - **Feature branch:** `hex/signing-dogfood` (ocx); `hex/signing-dogfood` in `.agents/worktrees/sat-ocx-mirror-release` (ocx-mirror, from its `origin/main`)
 - **Last update:** 2026-11-13 (/hex-execute started on e02bf76b3; scope this run: A0, waves 1–3, I1a)
 - **Next:** /hex-execute .claude/artifacts/plan_signing_dogfood.md
@@ -104,6 +104,8 @@ The discussion's eight open questions (D-1…D-8) take the recommended answer un
 - **D-24 Stamped release builds use no remote cache** (P-WF review, class: cache poisoning of signed bytes). Evidence: ADR `:1696-1702` stamps only with `no-remote-cache`; P-WF passed `BAZEL_CACHE_WRITE_AUTH` to the stamped cross builds. **Decision:** stamped builds get no cache credential (`release.yml`, `release-readiness.yml`); `cross.yml` passes write-auth only when not stamped; a C-017 test pins it.
 - **D-25 No main-only environment around release/candidate publish** (P-WF review question). Evidence: a branch can edit its own copy of `release.yml` and drop any `environment:`; `GITHUB_TOKEN` `packages: write` reaches every package linked to the repository either way; what consumers trust is the signer identity `release.yml@refs/heads/main`, which a branch cannot obtain. **Decision:** no extra environment; the release/candidate self-verify pins the literal `…/release.yml@refs/heads/main` identity. Recorded for the owner in the PR body (a branch can overwrite a prod tag with a non-main-signed build; detection is the identity pin).
 - **D-26 Backfill pins digests, not release-asset hashes** (P-WF review question). **Decision:** backfill resolves each platform's digest once and verifies/signs/attests `ref@<digest>`, printing it; it does not cross-check GitHub release asset hashes (OCI digest is the signed subject; the asset set is a separate artifact).
+
+- **D-27 Candidate "line" for retention** (P-WF question). **Decision:** a candidate's line is its final release `X.Y.Z`; once `X.Y.Z` exists and is at least `prune_after_days` old it is the newest build of the line, so every `X.Y.Z-rcN_<ts>` build tag and rolling `X.Y.Z-rcN` tag is selected together (avoids `prune_shared_version`); nothing of a line is selected before that. Implemented in `scripts/release_prune_select.py`.
 
 Open questions: none (`[NEEDS CLARIFICATION]` count 0).
 
@@ -210,9 +212,9 @@ IDs are the coverage join keys. "Red" and "green" name the case each test must s
 | P-402 | ocx | C-009, V-10 | `ocx_package/src/publisher/**` (push path), `ocx_package_manager/src/tasks/{sign,attest}.rs` if the order lives there, `ocx_cli/src/command/package_push.rs`, `test/tests/test_push_sign_order.py` (new) | 1 | — | — | merged |
 | P-PRUNE | ocx | C-011, C-012, C-013, S-009, V-15, V-16 | `ocx_package/src/prune.rs` + `prune/tests.rs`, `ocx_announce/src/forge/github_packages.rs`, `ocx_announce/src/forge.rs` (`pub mod`), `ocx_cli/src/command/package_prune.rs`, `test/tests/fake_forge.py`, `test/tests/test_package_prune.py` | 1 | A0 | review | merged |
 | P-SWITCH | ocx | S-004, V-19 | `test/tests/test_self_candidate_switch.py` (new; code change only if red persists) | 1 | — | — | merged |
-| P-WF | ocx | C-014…C-017, S-001…S-003, S-005, V-01, V-09 (structure) | `.github/workflows/**` (C-016 list), `dist-workspace.toml` (delete), `.github/{actionlint.yaml,zizmor.yml,renovate-local.json}`, `packaging/sdkgen/trust-policy.toml`, `.claude/tests/test_workflows.py`, `.claude/hooks/pre_tool_use_validator.py`, `.claude/tests/test_hooks.py`, `about.toml` | 2 | P-STAMP, P-PKG; contract-only: P-PRUNE (C-013 flag), P-402 (C-009), P-694 (C-008) — first met at I1 | hard, review | active |
-| P-FIX | e2e-package, e2e-index, ocx | C-018, C-019, C-020, V-04, V-11, V-12, V-18 | e2e-package `.github/workflows/{release,backfill,unsigned-v}.yml`, `scripts/*`, `README.md`; e2e-index `scripts/build_index.py`, `scripts/test_build_index.py`, `ocx.toml`, `ocx.lock`, `.github/workflows/dev-pin.yml`, `TESTING.md`; ocx `test/e2e/test_release_cycle_public.py` | 3 | P-WF | — | pending |
-| P-DOCS | ocx | C-022, V-20 | `website/src/content/docs/publishing/snapshot-tracks.md`, `getting-started/install-ocx.mdx`, `CONTRIBUTING.md`, `.claude/rules/{workflow-release,subsystem-ci,workflow-git,subsystem-deps}.md`, `.claude/rules/rust-quality/current-apis.md`, `.claude/rules.md`, `.claude/artifacts/{adr_bazel_build_adoption,system_design_publisher_trust}.md`, `.serena/memories/tech_stack.md`, generated reference pages | 3 | P-WF, P-PRUNE, P-HOST, P-NOVERIFY | — | pending |
+| P-WF | ocx | C-014…C-017, S-001…S-003, S-005, V-01, V-09 (structure) | `.github/workflows/**` (C-016 list), `dist-workspace.toml` (delete), `.github/{actionlint.yaml,zizmor.yml,renovate-local.json}`, `packaging/sdkgen/trust-policy.toml`, `.claude/tests/test_workflows.py`, `.claude/hooks/pre_tool_use_validator.py`, `.claude/tests/test_hooks.py`, `about.toml` | 2 | P-STAMP, P-PKG; contract-only: P-PRUNE (C-013 flag), P-402 (C-009), P-694 (C-008) — first met at I1 | hard, review | merged |
+| P-FIX | e2e-package, e2e-index, ocx | C-018, C-019, C-020, V-04, V-11, V-12, V-18 | e2e-package `.github/workflows/{release,backfill,unsigned-v}.yml`, `scripts/*`, `README.md`; e2e-index `scripts/build_index.py`, `scripts/test_build_index.py`, `ocx.toml`, `ocx.lock`, `.github/workflows/dev-pin.yml`, `TESTING.md`; ocx `test/e2e/test_release_cycle_public.py` | 3 | P-WF | — | active |
+| P-DOCS | ocx | C-022, V-20 | `website/src/content/docs/publishing/snapshot-tracks.md`, `getting-started/install-ocx.mdx`, `CONTRIBUTING.md`, `.claude/rules/{workflow-release,subsystem-ci,workflow-git,subsystem-deps}.md`, `.claude/rules/rust-quality/current-apis.md`, `.claude/rules.md`, `.claude/artifacts/{adr_bazel_build_adoption,system_design_publisher_trust}.md`, `.serena/memories/tech_stack.md`, generated reference pages | 3 | P-WF, P-PRUNE, P-HOST, P-NOVERIFY | — | active |
 | I1 (I1a local, I1b fixture loop) | ocx (+fixtures) | integration, V-05, V-21, V-22, META M-1…M-8 | — | 4 | all of wave 1–3 | — | pending |
 | EU | all | end-user break pass | regression tests + fixes as found | 5 | I1 | — | pending |
 | H | all | ≤4 hardening review rounds | fixes | 6 | EU | — | pending |

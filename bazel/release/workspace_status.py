@@ -30,7 +30,8 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from collections.abc import Mapping
+from datetime import UTC, datetime
 
 PASS_THROUGH = (
     "__OCX_BUILD_VERSION",
@@ -48,7 +49,7 @@ HEADS = "refs/heads/"
 def iso8601(ns: int) -> str:
     """vergen's `Iso8601::DEFAULT` rendering of a UTC instant, nanoseconds included."""
     seconds, nanos = divmod(ns, 1_000_000_000)
-    return f"{datetime.fromtimestamp(seconds, timezone.utc):%Y-%m-%dT%H:%M:%S}.{nanos:09d}Z"
+    return f"{datetime.fromtimestamp(seconds, UTC):%Y-%m-%dT%H:%M:%S}.{nanos:09d}Z"
 
 
 def git(*args: str) -> str | None:
@@ -56,7 +57,7 @@ def git(*args: str) -> str | None:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
-def branch(env: "os._Environ[str] | dict[str, str]") -> str | None:
+def branch(env: Mapping[str, str]) -> str | None:
     if env.get("GITHUB_REF", "").startswith(HEADS):
         return env.get("GITHUB_REF_NAME") or None
     name = git("rev-parse", "--abbrev-ref", "HEAD")
@@ -87,7 +88,10 @@ def main() -> int:
         if value and "\n" not in value and "\r" not in value:
             print(f"STABLE_OCX_{name} {value}")
         elif value:
-            print(f"workspace_status.py: skipping {name}: value contains a newline", file=sys.stderr)
+            print(
+                f"workspace_status.py: skipping {name}: value contains a newline",
+                file=sys.stderr,
+            )
     return 0
 
 

@@ -6,11 +6,13 @@
     scripts/release_prune_select.py dev --days N [--now ISO] < tags
     scripts/release_prune_select.py candidates --days N [--now ISO] < tags
 
-`dev` selects build tags `<X.Y.Z>-dev_<UTC>` whose build time is at least N days old; the rolling
-`<X.Y.Z>-dev` tag is never selected. `candidates` selects every candidate tag of `<X.Y.Z>`
+`dev` selects build tags `<X.Y.Z>-dev_<UTC>` whose build time is at least N days old, except the newest
+build of each `<X.Y.Z>` (the one the rolling tag carries); the rolling `<X.Y.Z>-dev` tag is never selected. `candidates` selects every candidate tag of `<X.Y.Z>`
 (`<X.Y.Z>-rc<N>_<UTC>` builds and rolling `<X.Y.Z>-rc<N>` tags) once the final `<X.Y.Z>_<UTC>` build is
 at least N days old; before the final exists or while it is younger, nothing of that version is selected. One tag per line on
 stdout, and nothing at all when none is selected. A tag that fits no shape is ignored, so a registry holding other tags selects nothing from them.
+
+--now must carry a UTC offset or is read as UTC.
 
 Exit codes: 0 selected (possibly nothing), 64 a bad argument.
 """
@@ -24,9 +26,9 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 
 STAMP = "%Y%m%d%H%M%S"
-DEV_BUILD = re.compile(r"^\d+\.\d+\.\d+-dev_(\d{14})$")
-RELEASE_BUILD = re.compile(r"^(\d+\.\d+\.\d+)_(\d{14})$")
-CANDIDATE = re.compile(r"^(\d+\.\d+\.\d+)(-rc[1-9]\d*)(?:_(\d{14}))?$")
+DEV_BUILD = re.compile(r"^([0-9]+\.[0-9]+\.[0-9]+)-dev_([0-9]{14})$")
+RELEASE_BUILD = re.compile(r"^([0-9]+\.[0-9]+\.[0-9]+)_([0-9]{14})$")
+CANDIDATE = re.compile(r"^([0-9]+\.[0-9]+\.[0-9]+)(-rc[1-9][0-9]*)(?:_([0-9]{14}))?$")
 
 
 def _built_at(stamp: str) -> datetime | None:
@@ -37,12 +39,18 @@ def _built_at(stamp: str) -> datetime | None:
 
 
 def select_dev(tags: Iterable[str], cutoff: datetime) -> list[str]:
-    chosen = []
+    builds: dict[str, list[tuple[datetime, str]]] = {}
     for tag in tags:
         match = DEV_BUILD.match(tag)
-        built = _built_at(match.group(1)) if match else None
-        if built is not None and built <= cutoff:
-            chosen.append(tag)
+        built = _built_at(match.group(2)) if match else None
+        if match and built is not None:
+            builds.setdefault(match.group(1), []).append((built, tag))
+    chosen = []
+    for line in builds.values():
+        # The newest build of a line shares its digest with the rolling `X.Y.Z-dev` tag, so prune
+        # refuses it (prune_shared_version) however old it is.
+        line.remove(max(line))
+        chosen.extend(tag for built, tag in line if built <= cutoff)
     return sorted(chosen)
 
 
@@ -71,17 +79,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("kind", choices=("dev", "candidates"))
     parser.add_argument("--days", type=int, required=True)
     parser.add_argument(
-        "--now", help="UTC time to measure from, ISO 8601; defaults to the clock"
+        "--now",
+        help="time to measure from, ISO 8601; an offset-less value is read as UTC; defaults to the clock",
     )
     args = parser.parse_args(argv)
     if args.days < 0:
         print("release_prune_select: --days must be >= 0", file=sys.stderr)
         return 64
-    now = (
-        datetime.fromisoformat(args.now).astimezone(UTC)
-        if args.now
-        else datetime.now(UTC)
-    )
+    now = datetime.now(UTC)
+    if args.now:
+        try:
+            parsed = datetime.fromisoformat(args.now)
+        except ValueError:
+            print(
+                f"release_prune_select: --now '{args.now}' is not an ISO 8601 time",
+                file=sys.stderr,
+            )
+            return 64
+        now = (
+            parsed.replace(tzinfo=UTC)
+            if parsed.tzinfo is None
+            else parsed.astimezone(UTC)
+        )
     cutoff = now - timedelta(days=args.days)
     tags = [line.strip() for line in sys.stdin if line.strip()]
     chosen = (

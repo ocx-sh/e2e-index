@@ -7530,6 +7530,41 @@
                 "help": "Append each gone tag the index lists, one per line, for `ocx package announce --tags-file`. Creates the file if absent and keeps the tags already in it. Written on every run that gets past selection, empty included and even when the run then fails partway, never on a dry run. A forced delete of a tag the index does not list writes nothing"
               },
               {
+                "id": "forge",
+                "long": "forge",
+                "value": {
+                  "type": "choice",
+                  "choices": [
+                    {
+                      "value": "github",
+                      "hidden": false
+                    },
+                    {
+                      "value": "gitlab",
+                      "hidden": false
+                    }
+                  ]
+                },
+                "required": false,
+                "required_unless": [],
+                "num_args": {
+                  "min": 1,
+                  "max": 1
+                },
+                "global": false,
+                "hidden": false,
+                "default": [],
+                "requires": [],
+                "conflicts": [],
+                "overrides": [],
+                "require_equals": false,
+                "allow_hyphen_values": false,
+                "last": false,
+                "trailing_var_arg": false,
+                "stdin_secret": false,
+                "help": "Delete through this forge's package API, for a registry that has no tag DELETE (`github`)"
+              },
+              {
                 "id": "dry_run",
                 "long": "dry-run",
                 "value": {

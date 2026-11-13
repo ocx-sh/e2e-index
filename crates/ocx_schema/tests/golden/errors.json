@@ -1629,6 +1629,11 @@
           "exit_code": 79
         },
         {
+          "value": "no_verify_refused",
+          "description": "--no-verify was refused because the system config requires signatures",
+          "exit_code": 81
+        },
+        {
           "value": "non_utf8_wire_name",
           "description": "A local index path is not valid UTF-8",
           "exit_code": 65
@@ -2047,6 +2052,11 @@
           "value": "prune_refused_pending",
           "description": "The index still lists a tag prune would delete, pending an announce",
           "exit_code": 75
+        },
+        {
+          "value": "prune_shared_version",
+          "description": "A version selected for deletion is shared with another tag",
+          "exit_code": 81
         },
         {
           "value": "prune_tag_still_present",

@@ -1283,6 +1283,8 @@ pub struct PackagePruneArgs {
     /// past selection, empty included and even when the run then fails partway, never on a dry run.
     /// A forced delete of a tag the index does not list writes nothing
     pub tags_file: Option<PathBuf>,
+    /// Delete through this forge's package API, for a registry that has no tag DELETE (`github`)
+    pub forge: Option<String>,
     /// Run the safeguard and report; delete nothing, write nothing
     pub dry_run: bool,
     /// Package whose tags to delete, e.g. `ocx.acme.example/acme/tool`
@@ -1303,6 +1305,7 @@ impl PackagePruneArgs {
         );
         argv.switch("force", self.force);
         argv.flag("tags-file", &self.tags_file, Presence::Optional, &[]);
+        argv.flag("forge", &self.forge, Presence::Optional, &["github", "gitlab"]);
         argv.switch("dry-run", self.dry_run);
         argv.positional("package", [&self.package], Presence::Required, Hyphen::Refuse);
         argv.positional("tags", &self.tags, Presence::Optional, Hyphen::Refuse);

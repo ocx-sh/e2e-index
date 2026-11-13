@@ -7,10 +7,15 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
+use ocx_announce::forge::ForgeKind;
 use ocx_package::prune;
 use ocx_package::version::Version;
 
+use crate::error::UsageError;
 use crate::options;
+
+const GITLAB_REFUSAL: &str =
+    "GitLab's registry does not accept OCX packages, see https://github.com/ocx-sh/ocx/issues/480";
 
 /// Delete tags from a package's registry repository, guarded by the index.
 #[derive(Parser)]
@@ -101,6 +106,12 @@ pub struct PackagePrune {
     #[arg(long = "tags-file", value_name = "PATH")]
     tags_file: Option<PathBuf>,
 
+    /// Delete through this forge's package API, for a registry that has no tag DELETE (`github`).
+    ///
+    /// `gitlab` is refused: GitLab's registry does not accept OCX packages.
+    #[arg(long, value_name = "FORGE")]
+    forge: Option<ForgeKind>,
+
     /// Run the safeguard and report; delete nothing, write nothing.
     #[arg(long)]
     dry_run: bool,
@@ -116,6 +127,7 @@ pub struct PackagePrune {
 
 impl PackagePrune {
     pub async fn execute(&self, context: crate::app::Context) -> anyhow::Result<ExitCode> {
+        self.refuse_gitlab()?;
         // Before any index or registry read: `--offline` refuses a prune outright.
         let remote_client = context.remote_client()?;
         let package = self.package.as_target(context.default_registry())?;
@@ -133,6 +145,10 @@ impl PackagePrune {
         } else {
             remote_client
         };
+
+        if self.forge == Some(ForgeKind::GitHub) {
+            return Self::prune_through_github_packages();
+        }
 
         let request = prune::PruneRequest {
             selection: self.selection(),
@@ -162,6 +178,18 @@ impl PackagePrune {
             None => Ok(ExitCode::SUCCESS),
             Some(error) => Err(error),
         }
+    }
+
+    fn refuse_gitlab(&self) -> anyhow::Result<()> {
+        if self.forge == Some(ForgeKind::GitLab) {
+            return Err(UsageError::new(GITLAB_REFUSAL).into());
+        }
+        Ok(())
+    }
+
+    /// Wiring point for the GitHub Packages deleter; filled by the prune pipeline.
+    fn prune_through_github_packages() -> anyhow::Result<ExitCode> {
+        unimplemented!("contract: build a GithubPackagesDeleter and run the prune flow through it")
     }
 
     fn selection(&self) -> prune::PruneSelection {
@@ -249,6 +277,27 @@ mod tests {
                 .map(|path| path.as_path()),
             Some(std::path::Path::new("removed.txt"))
         );
+    }
+
+    #[test]
+    fn forge_gitlab_parses_and_is_refused_with_one_line() {
+        let matches = parse(&[PACKAGE, "0.5.0", "--forge", "gitlab"]).expect("the flag parses");
+        assert_eq!(
+            matches.get_one::<super::ForgeKind>("forge"),
+            Some(&super::ForgeKind::GitLab)
+        );
+        let prune = super::PackagePrune {
+            prerelease: None,
+            keep_builds: None,
+            force: false,
+            tags_file: None,
+            forge: Some(super::ForgeKind::GitLab),
+            dry_run: false,
+            package: PACKAGE.parse().expect("identifier"),
+            tags: vec![],
+        };
+        let error = prune.refuse_gitlab().expect_err("gitlab is refused");
+        assert_eq!(error.to_string(), super::GITLAB_REFUSAL);
     }
 
     #[test]

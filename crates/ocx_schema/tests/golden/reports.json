@@ -302,6 +302,10 @@
         "timestamp": {
           "type": "string",
           "description": "ISO-8601 commit timestamp (author date)."
+        },
+        "branch": {
+          "type": "string",
+          "description": "The branch the binary was built from, when known."
         }
       },
       "required": [

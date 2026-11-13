@@ -21,6 +21,7 @@ mod git_push_options;
 mod git_stderr;
 mod git_workspace;
 mod github;
+pub mod github_packages;
 mod gitlab;
 mod http;
 mod identity;

@@ -314,6 +314,19 @@ pub enum PruneError {
         source: ClientError,
     },
 
+    /// A version the delete set needs also carries a tag outside the selection.
+    #[error("refusing to delete {tag} from {repository}: the same version also carries {other_tag}")]
+    #[exit(
+        PolicyBlocked,
+        slug = "prune_shared_version",
+        summary = "A version selected for deletion is shared with another tag"
+    )]
+    SharedVersion {
+        repository: String,
+        tag: String,
+        other_tag: String,
+    },
+
     /// A deleted tag was still served after every confirmation GET.
     #[error("{tag} is still present in {repository} after its delete; retry")]
     #[exit(
@@ -508,6 +521,53 @@ pub async fn prune(client: &ocx_oci::Client, target: &PruneTarget, request: &Pru
     };
     let error = run(client, target, request, &mut outcome).await.err();
     PruneRun { outcome, error }
+}
+
+/// What a [`TagDeleter`] is asked to remove from one repository.
+#[derive(Debug, Clone)]
+pub struct DeletePlan {
+    /// The repository the tags live in.
+    pub repository: OciIdentifier,
+    /// Tags to delete, in the order given.
+    pub tags: Vec<String>,
+    /// Report what would be deleted and delete nothing.
+    pub dry_run: bool,
+}
+
+/// What a [`TagDeleter`] removed, or would remove on a dry run.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DeleteReport {
+    /// Tags gone after this call.
+    pub deleted: Vec<String>,
+    /// Tags a dry run would delete.
+    pub would_delete: Vec<String>,
+}
+
+/// The seam between prune and how a registry removes tags.
+///
+/// The registry-API deleter removes a tag directly; a forge deleter removes the package version that
+/// carries it, and refuses with [`PruneError::SharedVersion`] when that version carries another tag.
+#[async_trait::async_trait]
+pub trait TagDeleter: Send + Sync {
+    /// Deletes `plan.tags` from `plan.repository`.
+    ///
+    /// # Errors
+    ///
+    /// [`PruneError::DeleteDenied`] when the credential lacks delete rights, [`PruneError::SharedVersion`]
+    /// when a version in the delete set carries a tag outside it.
+    async fn delete(&self, plan: &DeletePlan) -> Result<DeleteReport, PruneError>;
+}
+
+/// Deletes tags through the OCI distribution API.
+pub struct RegistryTagDeleter<'a> {
+    pub client: &'a ocx_oci::Client,
+}
+
+#[async_trait::async_trait]
+impl TagDeleter for RegistryTagDeleter<'_> {
+    async fn delete(&self, _plan: &DeletePlan) -> Result<DeleteReport, PruneError> {
+        unimplemented!("contract: delete each tag with a confirmed canonical DELETE, as delete_and_confirm does")
+    }
 }
 
 /// A selected tag's verdict before any DELETE.

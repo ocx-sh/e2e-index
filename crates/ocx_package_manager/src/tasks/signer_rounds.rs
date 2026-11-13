@@ -33,6 +33,22 @@ pub enum RoundsError {
         /// publisher lists share no entry, so no signature was checked.
         reason: Option<Box<VerifyErrorKind>>,
     },
+    /// `--no-verify` was given where the system config requires signatures.
+    #[error(
+        "--no-verify is refused for {registry}: the system config file {config_path} sets `signatures` for it, \
+         and only an operator can change that"
+    )]
+    #[exit(
+        PolicyBlocked,
+        slug = "no_verify_refused",
+        summary = "--no-verify was refused because the system config requires signatures"
+    )]
+    NoVerifyRefused {
+        /// The registry whose `signatures` setting forbids the bypass.
+        registry: String,
+        /// The system config file that sets it.
+        config_path: String,
+    },
     /// The index lists publishers only a newer ocx understands.
     #[error(
         "the index lists no publisher of {package} this ocx understands: {}; upgrade ocx or set \

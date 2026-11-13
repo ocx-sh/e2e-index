@@ -57,6 +57,9 @@ pub struct CommitInfo {
     /// ISO-8601 commit timestamp (author date).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<String>,
+    /// The branch the binary was built from, when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
 }
 
 /// Build environment metadata (timestamp, profile, target, rustc).
@@ -115,6 +118,7 @@ fn commit_info() -> Option<CommitInfo> {
         describe: describe.to_owned(),
         dirty,
         timestamp: option_env!("VERGEN_GIT_COMMIT_TIMESTAMP").map(str::to_owned),
+        branch: None,
     })
 }
 

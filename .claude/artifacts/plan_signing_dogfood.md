@@ -3,14 +3,14 @@
 ## Status
 
 - **Plan:** plan_signing_dogfood
-- **State:** plan-approved
+- **State:** executing
 - **Tier:** high
 - **Tier-grammar:** 5
 - **Updated:** 2026-11-13
-- **Active phase:** 0 — not started
-- **Step:** /hex-plan → plan-approved
+- **Active phase:** 0 — contract wave A0
+- **Step:** /hex-execute → contract wave
 - **Feature branch:** `hex/signing-dogfood` (ocx); `hex/signing-dogfood` in `.agents/worktrees/sat-ocx-mirror-release` (ocx-mirror, from its `origin/main`)
-- **Last update:** 2026-11-13 (/hex-plan high, on 179600d18)
+- **Last update:** 2026-11-13 (/hex-execute started on e02bf76b3; scope this run: A0, waves 1–3, I1a)
 - **Next:** /hex-execute .claude/artifacts/plan_signing_dogfood.md
 
 ---
@@ -193,7 +193,7 @@ IDs are the coverage join keys. "Red" and "green" name the case each test must s
 
 | Pipeline | Repo | Scope (IDs) | Expected files | Wave | Depends on | Marks | Status |
 |---|---|---|---|---|---|---|---|
-| A0 | ocx | contract wave: C-002, C-007, C-011, C-012, C-013 stubs + goldens | `ocx_package/src/prune.rs` (trait + stub), `ocx_announce/src/forge/github_packages.rs` (stub), `ocx_package_manager/src/tasks/signer_rounds.rs` (variant), `ocx_package/src/prune.rs` error variant, `ocx_cli/src/command/package_prune.rs` (flag parse, `unimplemented!` wiring), `ocx_cli/src/api/data/version.rs` (field), `ocx_env` testing var, `crates/ocx_schema/tests/golden/*`, `crates/ocx_schema/contract/baseline/*`, `ocx_cli/src/exit/detail_rows.txt`, `ocx_sdkgen/tests/golden/rust/*` | 0 | — | — | pending |
+| A0 | ocx | contract wave: C-002, C-007, C-011, C-012, C-013 stubs + goldens | `ocx_package/src/prune.rs` (trait + stub), `ocx_announce/src/forge/github_packages.rs` (stub), `ocx_package_manager/src/tasks/signer_rounds.rs` (variant), `ocx_package/src/prune.rs` error variant, `ocx_cli/src/command/package_prune.rs` (flag parse, `unimplemented!` wiring), `ocx_cli/src/api/data/version.rs` (field), `ocx_env` testing var, `crates/ocx_schema/tests/golden/*`, `crates/ocx_schema/contract/baseline/*`, `ocx_cli/src/exit/detail_rows.txt`, `ocx_sdkgen/tests/golden/rust/*` | 0 | — | — | active |
 | P-STAMP | ocx | C-001, C-002 (fill), V-02, V-07, V-08 | `bazel/release/**`, `crates/ocx_cli/BUILD.bazel`, `crates/ocx_cli/build.rs`, `crates/ocx_cli/src/app/build_info.rs`, `taskfiles/cross.taskfile.yml`, `scripts/release_provenance_check.py` (+ test) | 1 | A0 | hard | pending |
 | P-PKG | ocx | C-003, C-004, C-005, S-006, V-05, V-06 | `scripts/release_assets.py`, `scripts/publish_ocx_package.sh`, `scripts/local_publish.py`, `scripts/tests/test_{release_assets,publish_ocx_package,local_publish}.py`, `scripts/tests/fixtures/v0.6.6/*`, `taskfiles/release.taskfile.yml`, `ocx.toml`, `ocx.lock` | 1 | A0 (C-001 task contract only) | — | pending |
 | P-HOST | ocx | C-006, S-007, V-13 | `ocx_cli/src/command/package_{sbom,verify}.rs`, `ocx_package_manager/src/tasks/verify.rs`, `test/tests/test_{verify,sbom,attest}.py` | 1 | A0 | — | pending |

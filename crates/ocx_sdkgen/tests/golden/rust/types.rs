@@ -1619,6 +1619,9 @@ pub struct CommitInfo {
     /// ISO-8601 commit timestamp (author date).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<String>,
+    /// The branch the binary was built from, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
 }
 
 impl Unknowns for CommitInfo {
@@ -1628,6 +1631,7 @@ impl Unknowns for CommitInfo {
         field(pointer, out, "describe", &self.describe);
         field(pointer, out, "dirty", &self.dirty);
         field(pointer, out, "timestamp", &self.timestamp);
+        field(pointer, out, "branch", &self.branch);
     }
 }
 
@@ -3408,6 +3412,8 @@ pub enum ErrorDetail {
     NoSignaturesFound,
     /// Referrers exist but none is a recognised Sigstore bundle
     NoUsableBundle,
+    /// --no-verify was refused because the system config requires signatures
+    NoVerifyRefused,
     /// A local index path is not valid UTF-8
     NonUtf8WireName,
     /// ocx.lock records a platform key not in canonical form
@@ -3576,6 +3582,8 @@ pub enum ErrorDetail {
     PruneRefusedDurable,
     /// The index still lists a tag prune would delete, pending an announce
     PruneRefusedPending,
+    /// A version selected for deletion is shared with another tag
+    PruneSharedVersion,
     /// A deleted tag is still present in the registry
     PruneTagStillPresent,
     /// No publisher listed by the index signed the package
@@ -4181,6 +4189,7 @@ impl ErrorDetail {
             Self::NoProjectIn => "no_project_in",
             Self::NoSignaturesFound => "no_signatures_found",
             Self::NoUsableBundle => "no_usable_bundle",
+            Self::NoVerifyRefused => "no_verify_refused",
             Self::NonUtf8WireName => "non_utf8_wire_name",
             Self::NoncanonicalPlatformKey => "noncanonical_platform_key",
             Self::NotAManifest => "not_a_manifest",
@@ -4265,6 +4274,7 @@ impl ErrorDetail {
             Self::PrunePackageNotBare => "prune_package_not_bare",
             Self::PruneRefusedDurable => "prune_refused_durable",
             Self::PruneRefusedPending => "prune_refused_pending",
+            Self::PruneSharedVersion => "prune_shared_version",
             Self::PruneTagStillPresent => "prune_tag_still_present",
             Self::PublisherMismatch => "publisher_mismatch",
             Self::PublishersInvalid => "publishers_invalid",
@@ -4710,6 +4720,7 @@ impl ErrorDetail {
             "no_project_in" => Self::NoProjectIn,
             "no_signatures_found" => Self::NoSignaturesFound,
             "no_usable_bundle" => Self::NoUsableBundle,
+            "no_verify_refused" => Self::NoVerifyRefused,
             "non_utf8_wire_name" => Self::NonUtf8WireName,
             "noncanonical_platform_key" => Self::NoncanonicalPlatformKey,
             "not_a_manifest" => Self::NotAManifest,
@@ -4794,6 +4805,7 @@ impl ErrorDetail {
             "prune_package_not_bare" => Self::PrunePackageNotBare,
             "prune_refused_durable" => Self::PruneRefusedDurable,
             "prune_refused_pending" => Self::PruneRefusedPending,
+            "prune_shared_version" => Self::PruneSharedVersion,
             "prune_tag_still_present" => Self::PruneTagStillPresent,
             "publisher_mismatch" => Self::PublisherMismatch,
             "publishers_invalid" => Self::PublishersInvalid,

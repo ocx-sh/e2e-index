@@ -295,6 +295,7 @@ no_project	UsageError	No ocx.toml exists in the working directory or any parent
 no_project_in	UsageError	The explicitly selected project directory holds no ocx.toml
 no_signatures_found	NotFound	The target has no signature referrers
 no_usable_bundle	NotFound	Referrers exist but none is a recognised Sigstore bundle
+no_verify_refused	PolicyBlocked	--no-verify was refused because the system config requires signatures
 non_utf8_wire_name	DataError	A local index path is not valid UTF-8
 noncanonical_platform_key	DataError	ocx.lock records a platform key not in canonical form
 not_a_manifest	DataError	The registry did not answer with a manifest
@@ -383,6 +384,7 @@ prune_not_a_prerelease	UsageError	The --prerelease value is not a pre-release wi
 prune_package_not_bare	UsageError	The package argument carries a tag or digest
 prune_refused_durable	PolicyBlocked	The index still lists a tag prune would delete, and the tag is durable
 prune_refused_pending	TempFail	The index still lists a tag prune would delete, pending an announce
+prune_shared_version	PolicyBlocked	A version selected for deletion is shared with another tag
 prune_tag_still_present	TempFail	A deleted tag is still present in the registry
 publisher_mismatch	PermissionDenied	No publisher listed by the index signed the package
 publishers_invalid	DataError	The index lists publishers that are malformed

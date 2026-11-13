@@ -170,7 +170,7 @@ mod tests {
     /// - `ci` — present when the test binary is compiled inside CI itself
     ///   (GitHub Actions exports `GITHUB_*`); absent locally.
     /// - `channel` — present only when `__OCX_BUILD_CHANNEL` is set at
-    ///   compile time (cargo-dist release jobs).
+    ///   compile time (stamped release builds).
     ///
     /// Assert structural invariants on each populated block instead of
     /// presence, so the test passes in every build environment.

@@ -7,7 +7,7 @@ Parked on purpose, not abandoned. The owner cut this out of the signing-dogfood 
 
 The three parts of the split:
 
-- **Loop A**, `.agents/discussions/signing-dogfood.md`: `ocx-sh/ocx` and `ocx-sh/e2e-package`. Dev pre-release channel, own release workflow replacing cargo-dist, per-platform SBOM and signing, backfill, client carry-overs. Runs first.
+- **Loop A**, `.agents/discussions/signing-dogfood.md`: `ocx-sh/ocx`, `ocx-sh/ocx-mirror` and `ocx-sh/e2e-package`. Dev pre-release channel, own dispatched release workflow with release, candidate and dev modes, per-platform SBOM and signing, backfill, `ocx package prune` on GHCR, client carry-overs. Runs first. The owner moved ocx-mirror's own release cycle into loop A on 2026-11-13, after this file was first committed, so loop C starts from a mirror that already releases that way.
 - **Loop B**, `.agents/discussions/signing-dogfood-index-catalog.md`: index bot, index, catalog, theme, website.
 - **Loop C**, this file.
 
@@ -36,8 +36,7 @@ Provisional prose. Repositories: `ocx-sh/ocx-mirror` (local `/home/mherwig/dev/o
 
 **ocx-mirror's own release**
 
-- The same per-platform SBOM, signing and backfill as ocx gets in loop A, from a workflow dispatched on `main`. Today `.github/workflows/release.yml` is tag-triggered, its `oci-publish.yml` is a near copy of ocx's, and neither has `id-token` permission.
-- A dev-mode run publishes to `ghcr.io/ocx-sh/dev/mirror` only.
+- Moved to loop A (owner, 2026-11-13): the dispatched release workflow with release, candidate and dev modes, per-platform SBOM, signing, backfill and dev builds to `ghcr.io/ocx-sh/dev/mirror`. Loop C builds none of it; a resume checks that loop A delivered it.
 
 **SBOMs for mirrored packages**
 
@@ -66,7 +65,7 @@ Working positions taken with the owner on 2026-11-13.
 - **The end-to-end mirror repository is a new `ocx-sh/e2e-mirror`**, beside `ocx-sh/e2e-package` and `ocx-sh/e2e-index`.
 - **`ocx package sbom` and dependencies** (owner's direction, not final): a package's SBOM does not silently absorb its dependencies' SBOMs; a flag pair in the flattened clap style, `--dependencies` / `--no-dependencies`, selects whether the SBOMs of the dependency closure are returned too.
 - **Production release acts stay with the owner**: the loop lands workflows by pull request and proves them in `ocx-sh/e2e-mirror`. It cuts no release, dispatches no backfill on production tags and writes nothing to `ocx.sh` or to the production package `ghcr.io/ocx-sh/ocx/mirror`.
-- **Pre-releases live in a GHCR dev namespace** (`ghcr.io/ocx-sh/dev/cli`, `ghcr.io/ocx-sh/dev/mirror`, working names), chosen by the owner after `dev.ocx.sh` was found to serve no registry any more (checked 2026-11-13: `https://dev.ocx.sh/v2/` answers 404 with the website's page). Built by loop A for ocx; this loop adds the mirror's.
+- **Pre-releases live in a GHCR dev namespace** (`ghcr.io/ocx-sh/dev/cli`, `ghcr.io/ocx-sh/dev/mirror`, working names), chosen by the owner after `dev.ocx.sh` was found to serve no registry any more (checked 2026-11-13: `https://dev.ocx.sh/v2/` answers 404 with the website's page). Built by loop A for both ocx and ocx-mirror.
 - **Loop shape** (owner, for every loop of this effort): build and integrate until the end-to-end cases work together, and fixing what integration turns up is not a review round and is not capped; then three to five Sonnet subagents act as end users in isolated environments and try to break things, each bug getting a regression test and a fix; only then the review rounds, at very coarse granularity, at most 4, with a pasted hard cap of 12. A blocker found in review is fixed even at the limit. Against drift: a round that finds only smaller or unrelated issues ends the reviewing; those are fixed and no further review starts.
 - **Grants the owner stated** (they bind a run only when the owner's `/hex-loop` invocation repeats them): for a new `e2e-mirror` and the other e2e repositories, "you are explicilty allowed to create, force push to, make tags, releases or change settings including gh secrets, same holds for other e2e repos"; dispatching signed dev-channel runs of the release workflow in `ocx-sh/ocx-mirror`, publishing to the dev location only; pushing locally built pre-releases to that location. Not granted: merging, a production release, tag or backfill dispatch, any write to `ocx.sh`.
 
@@ -98,8 +97,6 @@ Committed copies under `.claude/artifacts/`, all dated 2026-11-13.
   Recommended: default `--no-dependencies`; with the flag, one document per package of the closure, each verified against its own `publishers`, never a merged document.
 - [NEEDS CLARIFICATION: Are the address-keyed `[sigstore."<host>"]` tables of the 2026-11-12 design part of this loop?]
   Recommended: no — replacing `[trust.sigstore]` is a config break and this effort is non-breaking. A mirror signer is a key file, or keyless on the instance `[trust.sigstore]` already names.
-- [NEEDS CLARIFICATION: Does ocx-mirror's release move to a dispatched workflow on `main` as ocx's does?]
-  Recommended: yes — the same reasons (constant identity) apply, and its `oci-publish.yml` is a near copy of ocx's.
 - [NEEDS CLARIFICATION: Is signing the image index on ghcr.io fixed ([ocx-sh/ocx#694](https://github.com/ocx-sh/ocx/issues/694)) here, if loop A left it?]
   Recommended: fix it — ocx-mirror signs the index above the platform manifests; the per-platform signatures remain what install verifies.
 - [NEEDS CLARIFICATION: In which order do the pull requests land?]
@@ -115,6 +112,5 @@ Each check is shown red on the failing case and green on the passing one. Everyt
 - **Mirror SBOMs**: a mirrored package carries an SBOM from each of the three sources in turn, attested by the mirror's signer; an already mirrored package gains one through backfill.
 - **Registry sync**: a sync of a subset (some packages, some tags, some platforms) keeps every upstream signature and SBOM attestation verifiable against the upstream `publishers`; with re-signing, a client configured only with the mirror's key verifies packages, SBOMs and the index with no Sigstore network access.
 - **Index signing**: an index signed with a key and one signed keylessly verify; an expired or tampered one warns under warn and refuses under enforce; an unchanged client talking to an unsigned index behaves as before except for the `ocx.sh` warning.
-- **ocx-mirror's own release**: a dev-mode run publishes to the dev namespace only, every platform with a signed manifest and a signed SBOM attestation.
 - **Non-breaking**: an existing mirror spec without the new blocks renders the same workflows as before; the previous ocx release still installs from an index whose catalog is signed.
 - **Loop phases**: as under Decisions › Loop shape.

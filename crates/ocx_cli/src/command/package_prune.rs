@@ -48,7 +48,8 @@ const GITLAB_REFUSAL: &str =
     deletion: push ephemeral builds with `--no-keep-tag`, or prune frees no storage.\n\n\
     A `ghcr.io` registry cannot delete a tag, so prune deletes through the GitHub packages API \
     with the credential ocx uses for that registry. A GitHub Enterprise `containers.<host>` \
-    registry, or any other host, needs `--forge github`. It deletes the version holding the tag, the platform \
+    registry needs `--forge github` and the repository named on that host directly; when the \
+    index supplies the host, any host but `ghcr.io` is refused with exit 64. It deletes the version holding the tag, the platform \
     manifests only that version lists, and the referrer tags of those manifests. A version that \
     also carries a tag outside the selection exits 81. `--dry-run` lists the same set and \
     deletes nothing. `--forge gitlab` is not supported.\n\n\
@@ -121,7 +122,8 @@ pub struct PackagePrune {
 
     /// Delete through this forge's package API, for a registry that has no tag DELETE (`github`).
     ///
-    /// Inferred for `ghcr.io` only; a GitHub Enterprise `containers.<host>` registry needs it named.
+    /// Inferred for `ghcr.io` only; a GitHub Enterprise `containers.<host>` registry needs it named, with the
+    /// repository given on that host directly, since a host the index supplies must be `ghcr.io`.
     /// `gitlab` is refused: GitLab's registry does not accept OCX packages.
     #[arg(long, value_name = "FORGE")]
     forge: Option<ForgeKind>,
@@ -213,7 +215,7 @@ impl PackagePrune {
     fn refuse_unvouched_forge_host(indexed: bool, registry: &str) -> anyhow::Result<()> {
         if indexed && forge_for_registry(registry).is_none() {
             return Err(UsageError::new(format!(
-                "the index names the registry {registry}, and only ghcr.io is deleted through the GitHub packages API from an index; name the repository on that host directly"
+                "the index names the registry {registry}, and an index-supplied host is deleted through the GitHub packages API only on ghcr.io; name the registry repository on that host directly instead"
             ))
             .into());
         }

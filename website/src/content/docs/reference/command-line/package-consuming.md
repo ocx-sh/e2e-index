@@ -191,7 +191,7 @@ One is a selected tag listed without the ephemeral marker (exit 81). The other i
 
 On the registry API prune deletes registry tags only: never a digest, a platform manifest, a keep tag or a referrer, and it never writes the index. A keep tag pins the manifest past the tag's deletion: push ephemeral builds with `--no-keep-tag`, or prune frees no storage.
 
-A `ghcr.io` registry cannot delete a tag, so prune deletes through the GitHub packages API with the credential ocx uses for that registry. A GitHub Enterprise `containers.<host>` registry, or any other host, needs `--forge github`.
+A `ghcr.io` registry cannot delete a tag, so prune deletes through the GitHub packages API with the credential ocx uses for that registry. A GitHub Enterprise `containers.<host>` registry needs `--forge github` and the repository named on that host directly; when the index supplies the host, any host but `ghcr.io` is refused with exit 64.
 
 It deletes the version holding the tag, the platform manifests only that version lists, and the referrer tags of those manifests. A version that also carries a tag outside the selection exits 81.
 

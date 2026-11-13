@@ -48,6 +48,28 @@ def test_scan_finds_each_marker_at_its_offset(tmp_path: Path, marker: bytes) -> 
     assert check_mod.main(["--scan", str(fixture)]) == EXIT_FINDING
 
 
+@pytest.mark.parametrize(
+    "name", ["__OCX_TESTING_FORGE_BASE_URL", "__OCX_TESTING_FAULT", "__OCX_TESTING_GITHUB_API_URL"]
+)
+def test_scan_flags_a_declared_testing_variable(tmp_path: Path, name: str) -> None:
+    # The registry declares these only under `__testing`: their names in a binary mean its seams are compiled in.
+    fixture = tmp_path / "red-seam"
+    fixture.write_bytes(b"\x7fELF" + b"\0" * 32 + name.encode() + b"\0" * 8)
+    findings = scan([fixture])
+    assert len(findings) == 1
+    assert "__OCX_TESTING_" in findings[0]
+    assert "offset 36" in findings[0]
+    assert check_mod.main(["--scan", str(fixture)]) == EXIT_FINDING
+
+
+def test_scan_tolerates_the_fault_hooks_error_text(tmp_path: Path) -> None:
+    # `ocx_project`'s dead-code message names the variable with `=` in every build, seams or not.
+    clean = tmp_path / "clean-hook-text"
+    clean.write_bytes(b"\x7fELF" + b"\0" * 32 + b"__OCX_TESTING_FAULT=" + b"\0" * 8)
+    assert scan([clean]) == []
+    assert check_mod.main(["--scan", str(clean)]) == EXIT_CLEAN
+
+
 def test_scan_reports_every_occurrence_not_only_the_first(tmp_path: Path) -> None:
     twice = tmp_path / "red-twice"
     twice.write_bytes(MARKERS[1] + b"\0" * 10 + MARKERS[1])

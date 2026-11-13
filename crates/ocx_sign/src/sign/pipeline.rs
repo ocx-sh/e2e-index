@@ -263,6 +263,12 @@ impl SignPipeline {
             }));
         }
 
+        let subject_media_type = manifest_media_type(&subject_bytes).ok_or_else(|| {
+            map_client_error(ClientError::InvalidManifest(
+                "subject manifest is not a JSON object with a signable media type".to_string(),
+            ))
+        })?;
+
         // Probe the PUSH host: a mirror's referrers support says nothing about the upstream's.
         let referrers_support =
             referrers_capability(transport, &write_image, &subject_digest, &ctx.state, ctx.no_cache).await?;
@@ -274,7 +280,7 @@ impl SignPipeline {
 
         // Best-effort per leg: hiding a landed leg behind the other's failure leaves the operator re-signing it.
         let subject_descriptor = Descriptor {
-            media_type: manifest_media_type(&subject_bytes),
+            media_type: subject_media_type,
             digest: subject_digest.to_string(),
             size: subject_bytes.len() as i64,
             ..Descriptor::default()
@@ -988,6 +994,35 @@ mod tests {
             transport.pushed_referrer()["subject"]["mediaType"],
             ocx_oci::OCI_IMAGE_INDEX_MEDIA_TYPE,
             "the signed subject descriptor must carry the fetched manifest's media type",
+        );
+    }
+
+    #[tokio::test]
+    async fn signing_refuses_a_subject_that_is_not_json_before_anything_is_pushed() {
+        let transport = recording_transport().serving_subject_manifest(b"not a manifest");
+        let (result, _calls, _temp, _signer) =
+            drive_sign(ocx_oci::client::MirrorMap::default(), transport.clone()).await;
+        let error = result.err().expect("an unreadable subject must be refused");
+        assert!(
+            matches!(&error.kind, SignErrorKind::Internal(inner)
+                if matches!(inner.downcast_ref::<ClientError>(), Some(ClientError::InvalidManifest(_)))),
+            "{:?}",
+            error.kind
+        );
+    }
+
+    #[tokio::test]
+    async fn signing_refuses_a_subject_declaring_a_media_type_outside_the_signable_list() {
+        let transport = recording_transport()
+            .serving_subject_manifest(br#"{"schemaVersion":2,"mediaType":"application/vnd.example.other+json"}"#);
+        let (result, _calls, _temp, _signer) =
+            drive_sign(ocx_oci::client::MirrorMap::default(), transport.clone()).await;
+        let error = result.err().expect("an unsignable declared type must be refused");
+        assert!(
+            matches!(&error.kind, SignErrorKind::Internal(inner)
+                if matches!(inner.downcast_ref::<ClientError>(), Some(ClientError::InvalidManifest(_)))),
+            "{:?}",
+            error.kind
         );
     }
 

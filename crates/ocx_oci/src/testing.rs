@@ -301,7 +301,10 @@ impl OciTransport for RecordingTransport {
     async fn pull_manifest_raw(&self, image: &Reference, accept: &[&str]) -> Answer<(Vec<u8>, String)> {
         self.record("pull_manifest_raw", image);
         let (bytes, digest) = self.manifest_answer(image)?;
-        if self.enforce_accept && !accept.contains(&crate::media_type::manifest_media_type(&bytes).as_str()) {
+        // An unreadable body counts as an image manifest: the double stands in for a registry that stored it as one.
+        let served_type = crate::media_type::manifest_media_type(&bytes)
+            .unwrap_or_else(|| crate::media_type::MEDIA_TYPE_OCI_IMAGE_MANIFEST.to_string());
+        if self.enforce_accept && !accept.contains(&served_type.as_str()) {
             return Err(ClientError::ManifestNotFound(image.whole()));
         }
         Ok((bytes, digest))

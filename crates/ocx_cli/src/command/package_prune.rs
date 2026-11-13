@@ -8,11 +8,17 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use ocx_announce::forge::ForgeKind;
+use ocx_announce::forge::ForgeToken;
+use ocx_announce::forge::github_packages::{GithubPackagesDeleter, api_base_for_registry, forge_for_registry};
+use ocx_announce::forge::http::build_forge_http_client;
 use ocx_package::prune;
 use ocx_package::version::Version;
 
 use crate::error::UsageError;
 use crate::options;
+
+/// Per-request ceiling for the packages API.
+const FORGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 const GITLAB_REFUSAL: &str =
     "GitLab's registry does not accept OCX packages, see https://github.com/ocx-sh/ocx/issues/480";
@@ -146,16 +152,18 @@ impl PackagePrune {
             remote_client
         };
 
-        if self.forge == Some(ForgeKind::GitHub) {
-            return Self::prune_through_github_packages();
-        }
-
         let request = prune::PruneRequest {
             selection: self.selection(),
             force: self.force,
             dry_run: self.dry_run,
         };
-        let run = prune::prune(client, &target, &request).await;
+        let run = match self.forge_for(&target.repository) {
+            Some(ForgeKind::GitHub) => {
+                let deleter = Self::github_deleter(&context, client, &target.repository).await?;
+                prune::prune_with(client, &deleter, &target, &request).await
+            }
+            _ => prune::prune(client, &target, &request).await,
+        };
 
         context.api().report(&run.outcome)?;
         let written = match (&self.tags_file, run.outcome.tags_file_entries()) {
@@ -180,16 +188,52 @@ impl PackagePrune {
         }
     }
 
+    /// The forge to delete through: the one named, else the one the registry host implies.
+    fn forge_for(&self, repository: &ocx_oci::OciIdentifier) -> Option<ForgeKind> {
+        self.forge.or_else(|| forge_for_registry(repository.registry()))
+    }
+
+    /// A GitHub Packages deleter for `repository`, authenticated with the credential ocx already resolves
+    /// for its registry host; requests go only to the API base derived from that host.
+    async fn github_deleter<'a>(
+        context: &crate::app::Context,
+        client: &'a ocx_oci::Client,
+        repository: &ocx_oci::OciIdentifier,
+    ) -> anyhow::Result<GithubPackagesDeleter<'a>> {
+        let registry = repository.registry();
+        let api_base = match testing_api_base() {
+            Some(url) => url,
+            None => api_base_for_registry(registry).ok_or_else(|| {
+                UsageError::new(format!(
+                    "no GitHub API is known for the registry {registry}, use a ghcr.io or containers.<host> package"
+                ))
+            })?,
+        };
+        let (owner, package) = repository
+            .repository()
+            .split_once('/')
+            .ok_or_else(|| UsageError::new("a GitHub package is named owner/package"))?;
+        let token = match ocx_oci::auth::Auth::new().get_or_fallback(registry).await {
+            ocx_oci::native::Auth::Basic(_, secret) => secret,
+            ocx_oci::native::Auth::Bearer(token) => token,
+            ocx_oci::native::Auth::Anonymous => String::new(),
+        };
+        let http = build_forge_http_client(FORGE_TIMEOUT, context.extra_roots_merged())?;
+        Ok(GithubPackagesDeleter::new(
+            client,
+            http,
+            api_base,
+            owner.to_owned(),
+            package.to_owned(),
+            ForgeToken::new(token),
+        ))
+    }
+
     fn refuse_gitlab(&self) -> anyhow::Result<()> {
         if self.forge == Some(ForgeKind::GitLab) {
             return Err(UsageError::new(GITLAB_REFUSAL).into());
         }
         Ok(())
-    }
-
-    /// Wiring point for the GitHub Packages deleter; filled by the prune pipeline.
-    fn prune_through_github_packages() -> anyhow::Result<ExitCode> {
-        unimplemented!("contract: build a GithubPackagesDeleter and run the prune flow through it")
     }
 
     fn selection(&self) -> prune::PruneSelection {
@@ -203,6 +247,18 @@ impl PackagePrune {
             },
         }
     }
+}
+
+#[cfg(any(test, feature = "__testing"))]
+fn testing_api_base() -> Option<String> {
+    ocx_env::__OCX_TESTING_GITHUB_API_URL
+        .get_raw()
+        .and_then(|url| url.into_string().ok())
+}
+
+#[cfg(not(any(test, feature = "__testing")))]
+fn testing_api_base() -> Option<String> {
+    None
 }
 
 #[cfg(test)]
@@ -298,6 +354,52 @@ mod tests {
         };
         let error = prune.refuse_gitlab().expect_err("gitlab is refused");
         assert_eq!(error.to_string(), super::GITLAB_REFUSAL);
+    }
+
+    fn prune_with_forge(forge: Option<super::ForgeKind>) -> super::PackagePrune {
+        super::PackagePrune {
+            prerelease: None,
+            keep_builds: None,
+            force: false,
+            tags_file: None,
+            forge,
+            dry_run: false,
+            package: PACKAGE.parse().expect("identifier"),
+            tags: vec!["0.5.0".to_owned()],
+        }
+    }
+
+    fn location(registry: &str) -> ocx_oci::OciIdentifier {
+        ocx_oci::OciIdentifier::from_parts("org/pkg", registry)
+    }
+
+    #[test]
+    fn the_forge_is_inferred_from_a_github_packages_host() {
+        let prune = prune_with_forge(None);
+        for host in ["ghcr.io", "containers.ghe.example"] {
+            assert_eq!(
+                prune.forge_for(&location(host)),
+                Some(super::ForgeKind::GitHub),
+                "{host}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_forge_is_inferred_for_any_other_host() {
+        let prune = prune_with_forge(None);
+        for host in ["localhost:5000", "registry.example", "docker.io"] {
+            assert_eq!(prune.forge_for(&location(host)), None, "{host}");
+        }
+    }
+
+    #[test]
+    fn an_explicit_forge_wins_over_the_host() {
+        let prune = prune_with_forge(Some(super::ForgeKind::GitHub));
+        assert_eq!(
+            prune.forge_for(&location("localhost:5000")),
+            Some(super::ForgeKind::GitHub)
+        );
     }
 
     #[test]

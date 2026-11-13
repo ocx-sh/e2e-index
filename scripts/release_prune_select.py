@@ -9,7 +9,8 @@
 `dev` selects build tags `<X.Y.Z>-dev_<UTC>` whose build time is at least N days old; the rolling
 `<X.Y.Z>-dev` tag is never selected. `candidates` selects the tags of every candidate line
 `<X.Y.Z>-rc<N>` (its build tags and its rolling tag) whose final `<X.Y.Z>_<UTC>` build is at least N
-days old; a candidate whose release has not been published is never selected. One tag per line on
+days old, except the newest build of each line and the line's rolling tag; a candidate whose release
+has not been published is never selected. One tag per line on
 stdout. A tag that fits no shape is ignored, so a registry holding other tags selects nothing from them.
 
 Exit codes: 0 selected (possibly nothing), 64 a bad argument.
@@ -26,7 +27,7 @@ from datetime import UTC, datetime, timedelta
 STAMP = "%Y%m%d%H%M%S"
 DEV_BUILD = re.compile(r"^\d+\.\d+\.\d+-dev_(\d{14})$")
 RELEASE_BUILD = re.compile(r"^(\d+\.\d+\.\d+)_(\d{14})$")
-CANDIDATE = re.compile(r"^(\d+\.\d+\.\d+)-rc[1-9]\d*(?:_\d{14})?$")
+CANDIDATE = re.compile(r"^(\d+\.\d+\.\d+)(-rc[1-9]\d*)(?:_(\d{14}))?$")
 
 
 def _built_at(stamp: str) -> datetime | None:
@@ -54,7 +55,24 @@ def select_candidates(tags: Iterable[str], cutoff: datetime) -> list[str]:
         built = _built_at(match.group(2)) if match else None
         if match and built is not None and built <= cutoff:
             final.add(match.group(1))
-    return sorted(t for t in tags if (m := CANDIDATE.match(t)) and m.group(1) in final)
+    # A line is every build of one `<X.Y.Z>-rc<N>`; its newest build stays, and so does the rolling tag
+    # that names it (pruning the rolling tag alone would leave that version shared with a kept tag).
+    newest: dict[str, str] = {}
+    for tag in tags:
+        match = CANDIDATE.match(tag)
+        if match and match.group(3):
+            line = match.group(1) + match.group(2)
+            newest[line] = max(newest.get(line, ""), match.group(3))
+    chosen = []
+    for tag in tags:
+        match = CANDIDATE.match(tag)
+        if not match or match.group(1) not in final:
+            continue
+        line = match.group(1) + match.group(2)
+        if line in newest and match.group(3) in (None, newest[line]):
+            continue
+        chosen.append(tag)
+    return sorted(chosen)
 
 
 def main(argv: list[str] | None = None) -> int:

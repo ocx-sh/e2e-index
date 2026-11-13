@@ -35,18 +35,21 @@ pub const SUBJECT_MANIFEST_TYPES: &[&str] = &[
     "application/vnd.docker.distribution.manifest.v2+json",
 ];
 
-/// The media type a manifest document declares in its `mediaType` field, or the one its shape implies when the field
-/// is absent (OCI makes it optional): `manifests` marks an image index, anything else an image manifest.
-pub fn manifest_media_type(bytes: &[u8]) -> String {
-    let document: serde_json::Value = serde_json::from_slice(bytes).unwrap_or_default();
-    if let Some(declared) = document.get("mediaType").and_then(serde_json::Value::as_str) {
-        return declared.to_string();
+/// The signable media type a subject manifest document carries, or `None` when the bytes are not a JSON object or
+/// declare a `mediaType` outside [`SUBJECT_MANIFEST_TYPES`]. When the field is absent (OCI makes it optional) the shape
+/// decides: `manifests` marks an image index, anything else an image manifest.
+pub fn manifest_media_type(bytes: &[u8]) -> Option<String> {
+    let document: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    let object = document.as_object()?;
+    if let Some(declared) = object.get("mediaType") {
+        let declared = declared.as_str()?;
+        return SUBJECT_MANIFEST_TYPES.contains(&declared).then(|| declared.to_string());
     }
-    if document.get("manifests").is_some() {
+    Some(if object.contains_key("manifests") {
         MEDIA_TYPE_OCI_IMAGE_INDEX.to_string()
     } else {
         MEDIA_TYPE_OCI_IMAGE_MANIFEST.to_string()
-    }
+    })
 }
 
 /// Infers a package layer's media type from its archive file name, or `None` for an unrecognized extension.
@@ -132,12 +135,33 @@ mod tests {
     #[test]
     fn manifest_media_type_reads_the_declared_type_then_the_shape() {
         assert_eq!(
-            manifest_media_type(br#"{"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[]}"#),
-            MEDIA_TYPE_OCI_IMAGE_INDEX
+            manifest_media_type(br#"{"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[]}"#)
+                .as_deref(),
+            Some(MEDIA_TYPE_OCI_IMAGE_INDEX)
         );
-        assert_eq!(manifest_media_type(br#"{"manifests":[]}"#), MEDIA_TYPE_OCI_IMAGE_INDEX);
-        assert_eq!(manifest_media_type(br#"{"layers":[]}"#), MEDIA_TYPE_OCI_IMAGE_MANIFEST);
-        assert_eq!(manifest_media_type(b"not json"), MEDIA_TYPE_OCI_IMAGE_MANIFEST);
+        assert_eq!(
+            manifest_media_type(br#"{"manifests":[]}"#).as_deref(),
+            Some(MEDIA_TYPE_OCI_IMAGE_INDEX)
+        );
+        assert_eq!(
+            manifest_media_type(br#"{"layers":[]}"#).as_deref(),
+            Some(MEDIA_TYPE_OCI_IMAGE_MANIFEST)
+        );
+    }
+
+    #[test]
+    fn manifest_media_type_refuses_a_subject_that_is_not_a_json_object() {
+        assert_eq!(manifest_media_type(b"not json"), None);
+        assert_eq!(manifest_media_type(b"[]"), None);
+    }
+
+    #[test]
+    fn manifest_media_type_refuses_a_declared_type_outside_the_signable_list() {
+        assert_eq!(
+            manifest_media_type(br#"{"mediaType":"application/vnd.oci.image.layer.v1.tar","layers":[]}"#),
+            None
+        );
+        assert_eq!(manifest_media_type(br#"{"mediaType":7}"#), None);
     }
 
     #[test]

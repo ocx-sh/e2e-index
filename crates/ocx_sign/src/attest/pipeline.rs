@@ -195,12 +195,18 @@ impl AttestPipeline {
             }));
         }
 
+        let subject_media_type = manifest_media_type(&subject_bytes).ok_or_else(|| {
+            map_client_error(ClientError::InvalidManifest(
+                "subject manifest is not a JSON object with a signable media type".to_string(),
+            ))
+        })?;
+
         // Probe the PUSH host: a mirror's referrers support says nothing about the upstream's.
         let referrers_support =
             referrers_capability(transport, &write_image, &subject_digest, &ctx.state, ctx.no_cache).await?;
 
         let subject_descriptor = Descriptor {
-            media_type: manifest_media_type(&subject_bytes),
+            media_type: subject_media_type,
             digest: subject_digest.to_string(),
             size: subject_bytes.len() as i64,
             ..Descriptor::default()
@@ -720,6 +726,43 @@ mod tests {
             run.transport.pushed_referrer()["subject"]["mediaType"],
             ocx_oci::OCI_IMAGE_INDEX_MEDIA_TYPE,
             "the attested subject descriptor must carry the fetched manifest's media type",
+        );
+    }
+
+    async fn attest_subject(bytes: &[u8]) -> Run {
+        drive_attest_with(
+            recording_transport().serving_subject_manifest(bytes),
+            AttestMode::Signed,
+            PredicateType::CycloneDx,
+            PREDICATE,
+            false,
+            false,
+            SignatureFormat::Bundle,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn attesting_refuses_a_subject_that_is_not_json() {
+        let run = attest_subject(b"not a manifest").await;
+        let error = run.result.err().expect("an unreadable subject must be refused");
+        assert!(
+            matches!(&error.kind, SignErrorKind::Internal(inner)
+                if matches!(inner.downcast_ref::<ClientError>(), Some(ClientError::InvalidManifest(_)))),
+            "{:?}",
+            error.kind
+        );
+    }
+
+    #[tokio::test]
+    async fn attesting_refuses_a_subject_declaring_a_media_type_outside_the_signable_list() {
+        let run = attest_subject(br#"{"schemaVersion":2,"mediaType":"application/vnd.example.other+json"}"#).await;
+        let error = run.result.err().expect("an unsignable declared type must be refused");
+        assert!(
+            matches!(&error.kind, SignErrorKind::Internal(inner)
+                if matches!(inner.downcast_ref::<ClientError>(), Some(ClientError::InvalidManifest(_)))),
+            "{:?}",
+            error.kind
         );
     }
 

@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       ocx_repository:
-        description: Repository to build ocx from, as owner/name.
+        description: Repository to build ocx from (ocx-sh/ocx or ocx-sh/e2e-index).
         required: false
         default: ocx-sh/ocx
         type: string
@@ -33,12 +33,16 @@ jobs:
       - name: Validate inputs
         run: |
           [[ "$OCX_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "ocx_repository must be owner/name" >&2; exit 64; }
+          case "$OCX_REPOSITORY" in
+            ocx-sh/ocx|ocx-sh/e2e-index) ;;
+            *) echo "ocx_repository must be ocx-sh/ocx or ocx-sh/e2e-index" >&2; exit 64 ;;
+          esac
           [[ "$OCX_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "ocx_ref must be a 40-hex commit SHA" >&2; exit 64; }
       - name: Check out ocx
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ inputs.ocx_repository }}
-          ref: ${{ inputs.ocx_ref }}
+          repository: ${{ env.OCX_REPOSITORY }}
+          ref: ${{ env.OCX_REF }}
           path: ocx-src
           submodules: recursive
           persist-credentials: false
@@ -56,4 +60,4 @@ jobs:
         working-directory: ocx-src/test
         env:
           OCX_E2E_BINARY: ${{ github.workspace }}/ocx-src/target/debug/ocx
-        run: ocx package exec ocx.sh/astral-sh/uv:0.12.5 -- uv run --python 3.14 pytest e2e -m e2e_public -p no:cacheprovider -v
+        run: ocx package exec ocx.sh/astral-sh/uv:0.12.5@sha256:04975adbdb9d08cb870de1d1e2e2e26f41d973b0de0429239d97d77246c557ce -- uv run --python 3.14 pytest e2e -m e2e_public -p no:cacheprovider -v

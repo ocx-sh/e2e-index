@@ -1,0 +1,5 @@
+# The ocx under test: a dev build of ocx-sh/ocx. Replace PLACEHOLDER with a tag of
+# ghcr.io/ocx-sh/dev/cli (`<X.Y.Z>-dev_<UTC>`), run `ocx lock`, commit this file and ocx.lock.
+# `dev-pin.yml` fails while the tag is a placeholder.
+[tools]
+ocx = "ghcr.io/ocx-sh/dev/cli:PLACEHOLDER"

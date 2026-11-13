@@ -39,6 +39,33 @@ The cell is the expected exit code.
 
 Add `--format json` before `package` to read the slug from `error.detail`.
 
+## The release root
+
+`e2e/release` is the root of the package's own release pipeline (`release.yml` and `backfill.yml` in
+[e2e-package](https://github.com/ocx-sh/e2e-package)). It is not generated: `announce --output` writes its tag rows and
+they are committed by hand; `scripts/build_index.py` seeds it once and leaves it alone afterwards. It trusts two keyless
+identities, `release.yml@refs/heads/main` and `backfill.yml@refs/heads/main`, each pinned to this repository and
+organization by id.
+
+| Tag | Published by | Expected |
+|---|---|---|
+| `0.1.0` | `release.yml`, `mode=release` | installs, both platforms; `package verify` and `package sbom` pass without `--platform` |
+| `0.0.1` | `unsigned-v.yml` | exit 79 until `backfill.yml` has run, then installs; a second run adds nothing |
+| `0.1.0-rcN` | `release.yml`, `mode=candidate` | installs by pin; its row is ephemeral and the floating tags do not move |
+| a pruned candidate | `release.yml`, `mode=release` | the row is gone and the install exits 79 |
+
+```sh
+ocx package install e2e.ocx.sh/e2e/release:0.1.0
+ocx package verify e2e.ocx.sh/e2e/release:0.1.0
+ocx package sbom e2e.ocx.sh/e2e/release:0.1.0
+```
+
+## The dev pin
+
+`ocx.toml` and `ocx.lock` pin the dev build of ocx (`ghcr.io/ocx-sh/dev/cli`), and the `dev-pin` workflow runs
+`ocx version --verbose` from that pin. While `ocx.toml` carries the `PLACEHOLDER` tag the workflow fails with that
+reason; replace the tag, run `ocx lock`, and commit both files.
+
 ## Settings and the opt-out
 
 ```sh
@@ -52,8 +79,9 @@ OCX_HOME="$(mktemp -d)" ocx package install e2e.ocx.sh/e2e/none:unsigned
 
 ## SBOM and attestations
 
-`package sbom` and `package verify` need `--platform`: without it they look at the image index, and only the
-platform manifest is signed ([ocx-sh/ocx#694](https://github.com/ocx-sh/ocx/issues/694)), so they exit 79.
+`package sbom` and `package verify` need `--platform` on ocx 0.6.6 and older: without it they look at the image index,
+and only the platform manifest is signed ([ocx-sh/ocx#694](https://github.com/ocx-sh/ocx/issues/694)), so they exit 79.
+A newer ocx defaults to the host platform.
 
 ```sh
 p='--platform linux/amd64+libc.glibc'

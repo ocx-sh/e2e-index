@@ -1,0 +1,35 @@
+name: dev-pin
+
+# Runs the dev build of ocx that ocx.toml pins and prints what it reports. Fails while the pin is a placeholder.
+on:
+  push:
+    branches: [main]
+    paths: [ocx.toml, ocx.lock, .github/workflows/dev-pin.yml]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  dev-pin:
+    if: github.repository_id == '1455949056'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Refuse a placeholder pin
+        run: |
+          if grep -q PLACEHOLDER ocx.toml; then
+            echo "::error::ocx.toml still pins the PLACEHOLDER tag: set a ghcr.io/ocx-sh/dev/cli build tag, run ocx lock, commit both files"
+            exit 1
+          fi
+      - uses: ocx-sh/setup-ocx@25fa771f8572572dc64528db89560de68a163a0e # v1.4.0
+        with:
+          version: '0.6.6'
+          project: ''
+          cache: false
+      - name: Run the pinned ocx
+        run: ocx exec -- ocx version --verbose

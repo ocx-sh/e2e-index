@@ -34,6 +34,9 @@ SUMMARY = {
     "none": "no publishers declared, so nothing is checked",
     "future": "only entries this ocx does not understand, so every install is refused",
 }
+# The one root this script does not generate: ocx's release pipeline announces into it (`announce --output`) and the
+# entry is committed by hand. A rebuild seeds it when absent and otherwise leaves it, and its catalog line, alone.
+RELEASE_ROOT = "e2e/release"
 TAGS = ("main", "tag", "other", "key", "unsigned", "two-sboms")
 INDEX_MEDIA_TYPE = "application/vnd.oci.image.index.v1+json"
 
@@ -43,6 +46,7 @@ OWNER_ID = "263156444"
 ISSUER = "https://token.actions.githubusercontent.com"
 WORKFLOW_BASE = "https://github.com/ocx-sh/e2e-package/.github/workflows"
 RELEASE_URI = f"{WORKFLOW_BASE}/release.yml@refs/heads/main"
+BACKFILL_URI = f"{WORKFLOW_BASE}/backfill.yml@refs/heads/main"
 TAG_IDENTITY_REGEXP = r"^https://github\.com/ocx-sh/e2e-package/\.github/workflows/release-tag\.yml@refs/tags/.+$"
 
 # Fulcio extension OIDs by claim name; see C-006.
@@ -66,6 +70,22 @@ def claims_entry(by_oid: bool) -> dict:
     if by_oid:
         claims = {OID[name]: value for name, value in claims.items()}
     return {"kind": "keyless", "oidc_issuer": ISSUER, "claims": claims}
+
+
+def release_publishers() -> list[dict]:
+    """The two identities of an own package: the release workflow and the backfill workflow, pinned to this repository."""
+    return [
+        {
+            "kind": "keyless",
+            "oidc_issuer": ISSUER,
+            "claims": {
+                "source_repository_identifier": REPOSITORY_ID,
+                "source_repository_owner_identifier": OWNER_ID,
+                "build_signer_uri": uri,
+            },
+        }
+        for uri in (RELEASE_URI, BACKFILL_URI)
+    ]
 
 
 def publishers() -> dict[str, list | None]:
@@ -169,8 +189,34 @@ def build(out: Path, indexes: dict[str, bytes], observed: str) -> dict[str, str]
         root_bytes = canonical(root)
         write(out / "p" / f"{repository}.json", root_bytes)
         catalog[repository] = sha256(root_bytes)
+    keep_release_root(out, observed, catalog)
     write(out / "c" / "index.json", canonical({"format_version": 1, "packages": catalog}))
     return catalog
+
+
+def keep_release_root(out: Path, observed: str, catalog: dict[str, str]) -> None:
+    """Seed `e2e/release` with no tags when absent, then record whatever root is on disk in the catalog."""
+    path = out / "p" / f"{RELEASE_ROOT}.json"
+    if not path.exists():
+        readme = README.read_bytes()
+        readme_digest = sha256(readme)
+        write(out / "p" / RELEASE_ROOT / "o" / "sha256" / f"{readme_digest.split(':')[1]}.md", readme)
+        root = {
+            "name": f"{INDEX_NAME}/{RELEASE_ROOT}",
+            "repository": REPOSITORY,
+            "status": "active",
+            "created": observed[:10],
+            "desc": {
+                "title": RELEASE_ROOT,
+                "description": "Fixture: the package's own release pipeline, trusted by its two workflow identities.",
+                "keywords": ["e2e", "release"],
+                "readme": readme_digest,
+            },
+            "tags": {},
+            "publishers": release_publishers(),
+        }
+        write(path, canonical(root))
+    catalog[RELEASE_ROOT] = sha256(path.read_bytes())
 
 
 def main() -> None:

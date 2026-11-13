@@ -37,21 +37,28 @@ def test_dev_with_zero_days_selects_every_build_and_still_not_the_rolling_tag() 
 
 
 def test_candidates_need_their_final_release_to_be_old_enough() -> None:
-    old = sel.select_candidates(TAGS, NOW - timedelta(days=30))
-    assert old == ["0.6.0-rc1_20260801000000"]
+    every_candidate_of_0_6_0 = [
+        "0.6.0-rc1",
+        "0.6.0-rc1_20260801000000",
+        "0.6.0-rc1_20260820000000",
+        "0.6.0-rc2_20260825000000",
+    ]
+    assert sel.select_candidates(TAGS, NOW - timedelta(days=30)) == every_candidate_of_0_6_0
     assert sel.select_candidates(TAGS, NOW - timedelta(days=90)) == []
 
 
-def test_the_newest_build_of_each_candidate_line_and_its_rolling_tag_are_kept() -> None:
+def test_every_candidate_of_an_old_enough_release_is_selected_with_its_rolling_tag() -> None:
     chosen = sel.select_candidates(TAGS, NOW)
-    assert "0.6.0-rc1_20260820000000" not in chosen, "the newest build of the rc1 line"
-    assert "0.6.0-rc1" not in chosen, (
-        "the rolling tag names the kept build; deleting it would leave that version shared"
-    )
-    assert "0.6.0-rc2_20260825000000" not in chosen, "a line of one build keeps it"
-    assert "0.6.0-rc1_20260801000000" in chosen, (
-        "an older build of a line is still pruned"
-    )
+    assert "0.6.0-rc1_20260820000000" in chosen, "the final is newer than every build"
+    assert "0.6.0-rc1" in chosen, "selected with its builds, so prune sees no shared version"
+    assert "0.6.0-rc2_20260825000000" in chosen, "a line of one build is selected too"
+    assert "0.6.0-rc1_20260801000000" in chosen
+
+
+def test_a_single_candidate_build_of_an_old_enough_release_is_selected() -> None:
+    assert sel.select_candidates(
+        ["1.0.0-rc1_20260101000000", "1.0.0_20260201000000"], NOW
+    ) == ["1.0.0-rc1_20260101000000"]
 
 
 def test_a_rolling_candidate_tag_with_no_build_is_selected() -> None:

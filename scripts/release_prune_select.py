@@ -7,10 +7,9 @@
     scripts/release_prune_select.py candidates --days N [--now ISO] < tags
 
 `dev` selects build tags `<X.Y.Z>-dev_<UTC>` whose build time is at least N days old; the rolling
-`<X.Y.Z>-dev` tag is never selected. `candidates` selects the tags of every candidate line
-`<X.Y.Z>-rc<N>` (its build tags and its rolling tag) whose final `<X.Y.Z>_<UTC>` build is at least N
-days old, except the newest build of each line and the line's rolling tag; a candidate whose release
-has not been published is never selected. One tag per line on
+`<X.Y.Z>-dev` tag is never selected. `candidates` selects every candidate tag of `<X.Y.Z>`
+(`<X.Y.Z>-rc<N>_<UTC>` builds and rolling `<X.Y.Z>-rc<N>` tags) once the final `<X.Y.Z>_<UTC>` build is
+at least N days old; before the final exists or while it is younger, nothing of that version is selected. One tag per line on
 stdout. A tag that fits no shape is ignored, so a registry holding other tags selects nothing from them.
 
 Exit codes: 0 selected (possibly nothing), 64 a bad argument.
@@ -55,23 +54,13 @@ def select_candidates(tags: Iterable[str], cutoff: datetime) -> list[str]:
         built = _built_at(match.group(2)) if match else None
         if match and built is not None and built <= cutoff:
             final.add(match.group(1))
-    # A line is every build of one `<X.Y.Z>-rc<N>`; its newest build stays, and so does the rolling tag
-    # that names it (pruning the rolling tag alone would leave that version shared with a kept tag).
-    newest: dict[str, str] = {}
-    for tag in tags:
-        match = CANDIDATE.match(tag)
-        if match and match.group(3):
-            line = match.group(1) + match.group(2)
-            newest[line] = max(newest.get(line, ""), match.group(3))
+    # The final is the newest build of its line, so every candidate of that version goes together;
+    # selecting the rolling tag with its builds avoids prune's shared-version refusal.
     chosen = []
     for tag in tags:
         match = CANDIDATE.match(tag)
-        if not match or match.group(1) not in final:
-            continue
-        line = match.group(1) + match.group(2)
-        if line in newest and match.group(3) in (None, newest[line]):
-            continue
-        chosen.append(tag)
+        if match and match.group(1) in final:
+            chosen.append(tag)
     return sorted(chosen)
 
 

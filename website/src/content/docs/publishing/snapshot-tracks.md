@@ -158,7 +158,7 @@ Retry exit 75. Never retry exit 69 or 82.
 
 ### GitLab CI {#snapshot-tracks-ci-gitlab}
 
-GitLab's own container registry does not accept OCX packages, so this recipe runs the pipeline on GitLab CI, keeps the index on GitLab, and pushes the packages to [GHCR][ghcr]. Any registry that takes OCX packages works the same way. See [issue 480][issue-480] for the GitLab registry.
+The container registry on gitlab.com did not accept an OCX package in a measured copy, so this recipe runs the pipeline on GitLab CI, keeps the index on GitLab, and pushes the packages to [GHCR][ghcr]. Any registry that takes OCX packages works the same way. See [issue 480][issue-480] for the GitLab registry.
 
 ```yaml
 variables:
@@ -295,10 +295,10 @@ Prune needs a way to delete tags. Tag deletion is optional in the [OCI distribut
 | [zot][zot] v2.1.18 | Answers 202 and removes the tag. Measured against a running registry | Works |
 | [`registry:2`][distribution] with delete disabled | Answers 405 `UNSUPPORTED`. Measured | Exit 82 |
 | [`registry:2`][distribution] with delete enabled | Answers 400 `DIGEST_INVALID` and the tag stays. Measured | Exit 82 |
-| [GHCR][ghcr] | The registry API deletes no tag. Prune deletes through the GitHub packages API with `--forge github`, which it infers for `ghcr.io` | Works with `--forge github`, using the credential ocx resolves for `ghcr.io` |
-| [gitlab.com][gitlab-registry] | The registry refuses the package push with `MANIFEST_INVALID`, exit 69, so nothing reaches prune | Not reachable |
+| [GHCR][ghcr] | The registry API deletes no tag. Prune deletes through the GitHub packages API with `--forge github`, which it infers for `ghcr.io` | Works with `--forge github`, using the credential ocx resolves for `ghcr.io`. Measured in [a live run][ghcr-prune-run]: with a version shared with a stable tag the first attempt exited 81 and deleted nothing, and the rerun deleted the 8 candidate tags while the stable and unrelated tags stayed |
+| [gitlab.com][gitlab-registry] | The registry refuses `ocx package copy` with `400 MANIFEST_INVALID` (`unknown media type: application/vnd.sh.ocx.package.v1`), exit 69, and no tag appears. Measured; a self-managed GitLab registry is not measured | Not reachable on gitlab.com |
 
-[Docker Hub][docker-hub] and [Amazon ECR][ecr] do not offer tag deletion through the registry API, so prune exits 82 against them. This comes from their documentation, and no run against them is recorded here. The GHCR row follows the implementation, and no run against GHCR is recorded here either.
+[Docker Hub][docker-hub] and [Amazon ECR][ecr] do not offer tag deletion through the registry API, so prune exits 82 against them. This comes from their documentation, and no run against them is recorded here.
 
 Exit 82 is never transient, so do not retry it. Use a registry or a forge that deletes tags, or delete through the registry's own tooling and skip prune.
 
@@ -331,6 +331,7 @@ Exit 82 is never transient, so do not retry it. Use a registry or a forge that d
 [oci-delete-tags]: https://github.com/opencontainers/distribution-spec/blob/main/spec.md#deleting-tags
 [zot]: https://zotregistry.dev/
 [distribution]: https://distribution.github.io/distribution/
+[ghcr-prune-run]: https://github.com/ocx-sh/e2e-package/actions/runs/43510835871
 [ghcr]: https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry
 [docker-hub]: https://hub.docker.com/
 [ecr]: https://aws.amazon.com/ecr/

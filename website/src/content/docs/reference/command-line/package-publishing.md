@@ -472,7 +472,7 @@ Title, description and keywords for catalog display come from `ocx package descr
 
 Both keys are omitted when empty.
 
-`signatures` has one row per platform `--sign` signed, and `attestation` records the `--sbom` outcome (`status`, `predicate_type` and `signed`, or `kind` and `message` on failure). `aliases_written` lists the tags `--default` aliased onto the bare track.
+`signatures` has one row per platform `--sign` signed, and `attestation` records the published `--sbom` attestation (`status`, `predicate_type` and `signed`); a failed attestation emits the error document instead. `aliases_written` lists the tags `--default` aliased onto the bare track.
 
 ```text
 ocx package push [OPTIONS] [LAYERS]...

@@ -171,7 +171,7 @@ def generate_sbom(root: Path, version: str, triple: str, out_dir: Path) -> Path:
             "--manifest-path",
             str(source / "crates" / "ocx_cli" / "Cargo.toml"),
             "--override-filename",
-            stem,
+            f"{stem}.cdx",
         ],
         # The current checkout's pinned tool: an old tag's ocx.toml may not declare it in this group.
         cwd=root,

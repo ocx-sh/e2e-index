@@ -8,6 +8,7 @@ from pathlib import Path
 
 import backfill_release as bf
 import pytest
+from cdx_stub import run_cyclonedx
 
 IDENTITY = (
     "https://github.com/ocx-sh/ocx/.github/workflows/backfill.yml@refs/heads/main"
@@ -224,6 +225,8 @@ def test_generate_sbom_runs_the_current_toolchain_against_the_old_checkout(
 
     def stub(argv: list[str], cwd: Path, check: bool) -> None:
         calls.append((argv, cwd))
+        if argv[0] == "ocx":
+            run_cyclonedx(argv)
 
     monkeypatch.setattr(bf.subprocess, "run", stub)
     (tmp_path / "source-v0.6.6").mkdir()
@@ -235,3 +238,4 @@ def test_generate_sbom_runs_the_current_toolchain_against_the_old_checkout(
     manifest = argv[argv.index("--manifest-path") + 1]
     assert manifest == str(tmp_path / "source-v0.6.6/crates/ocx_cli/Cargo.toml")
     assert out == tmp_path / "source-v0.6.6/crates/ocx_cli/ocx-x86_64-unknown-linux-gnu.cdx.json"
+    assert out.is_file(), "the returned path is the file the tool wrote"

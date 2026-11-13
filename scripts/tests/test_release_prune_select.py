@@ -191,3 +191,15 @@ def test_non_ascii_digits_are_not_a_build_stamp() -> None:
     assert sel.DEV_BUILD.match(f"{arabic}-dev_20200101000000") is None
     assert sel.RELEASE_BUILD.match(f"{arabic}_20200101000000") is None
     assert sel.CANDIDATE.match(f"{arabic}-rc1") is None
+
+
+@pytest.mark.parametrize(("age_days", "selected"), [(29, False), (30, True)])
+def test_a_final_release_is_old_enough_at_exactly_prune_after_days(
+    age_days: int, selected: bool
+) -> None:
+    built = (NOW - timedelta(days=age_days)).strftime("%Y%m%d%H%M%S")
+    tags = ["1.0.0-rc1_20260101000000", f"1.0.0_{built}"]
+    cutoff = NOW - timedelta(days=30)  # what `main` computes for `--days 30`
+    assert sel.select_candidates(tags, cutoff) == (
+        ["1.0.0-rc1_20260101000000"] if selected else []
+    )

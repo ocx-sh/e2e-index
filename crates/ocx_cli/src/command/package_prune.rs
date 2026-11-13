@@ -171,6 +171,7 @@ impl PackagePrune {
         }
         let run = match self.forge_for(&target.repository) {
             Some(ForgeKind::GitHub) => {
+                Self::refuse_unvouched_forge_host(target.index.is_some(), target.repository.registry())?;
                 let deleter =
                     Self::github_deleter(&context, client, &target.repository, &self.selection_label()).await?;
                 prune::prune_with(client, &deleter, &target, &request).await
@@ -204,6 +205,19 @@ impl PackagePrune {
     /// The forge to delete through: the one named, else the one the registry host implies.
     fn forge_for(&self, repository: &ocx_oci::OciIdentifier) -> Option<ForgeKind> {
         self.forge.or_else(|| forge_for_registry(repository.registry()))
+    }
+
+    /// An index-supplied registry host is deleted through the GitHub API only when it is `ghcr.io`: the
+    /// operator vouched for no other host, and the credential for it would go to the API that host names.
+    /// A host the operator typed themselves (no index) may be a `containers.<host>` enterprise registry.
+    fn refuse_unvouched_forge_host(indexed: bool, registry: &str) -> anyhow::Result<()> {
+        if indexed && forge_for_registry(registry).is_none() {
+            return Err(UsageError::new(format!(
+                "the index names the registry {registry}, and only ghcr.io is deleted through the GitHub packages API from an index; name the repository on that host directly"
+            ))
+            .into());
+        }
+        Ok(())
     }
 
     /// A GitHub Packages deleter for `repository`, authenticated with the credential ocx already resolves
@@ -573,5 +587,12 @@ mod tests {
             assert!(help.contains(needle), "long help must mention {needle}:\n{help}");
         }
         assert!(help.is_ascii(), "help text must stay ASCII");
+    }
+
+    #[test]
+    fn index_supplied_host_other_than_ghcr_is_refused() {
+        assert!(super::PackagePrune::refuse_unvouched_forge_host(true, "containers.evil.example").is_err());
+        assert!(super::PackagePrune::refuse_unvouched_forge_host(true, "ghcr.io").is_ok());
+        assert!(super::PackagePrune::refuse_unvouched_forge_host(false, "containers.ghe.example").is_ok());
     }
 }

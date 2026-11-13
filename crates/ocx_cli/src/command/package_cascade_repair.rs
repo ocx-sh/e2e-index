@@ -42,9 +42,10 @@ use crate::options;
     flight. An index-staleness finding is never something `repair` writes. Reaching the public \
     index with the fix is a second hop through `ocx package announce`. Refreshing one \
     machine's local copy is `ocx index update`'s job.\n\n\
-    `--tags-file` records exactly the tags whose write landed (not `raced`, `refused` or \
-    `failed` ones), unioned with every tag an index-staleness finding names, so one file \
-    covers both hops. It is written on every run, empty included, so a workflow can feed it to \
+    `--tags-file` records the tags whose write landed (not `raced`, `refused` or \
+    `failed` ones) and the in-scope tags that already carry the expected content, unioned with \
+    every tag an index-staleness finding names, so one file covers both hops and a retry after a \
+    failed announce still lists the tags the first run moved. It is written on every run, empty included, so a workflow can feed it to \
     `announce` unconditionally. A preview contributes no landed tag, and its plan is in the \
     JSON report as each entry's `planned`.\n\n\
     A follow-up `announce` updates or creates the listed aliases; a repair never produces a \
@@ -131,14 +132,29 @@ impl PackageCascadeRepair {
     }
 }
 
-/// The alias tags a run hands to `ocx package announce`: writes that landed plus every tag an
-/// index finding names. Never a raced, failed, refused or unattempted write, since announce
-/// commits whatever the registry serves and would publish a digest this run never wrote.
+/// The alias tags a run hands to `ocx package announce`: writes that landed, every tag an index
+/// finding names, and every in-scope alias that already carries exactly the expected content (a
+/// retry whose first run moved the aliases but never announced them). Never a raced, failed,
+/// refused or unattempted write, since announce commits whatever the registry serves and would
+/// publish a digest this run never wrote.
 fn announce_tags(report: &graph::CascadeReport, outcomes: &[apply::RepairOutcome]) -> Vec<String> {
     outcomes
         .iter()
         .filter(|outcome| matches!(outcome.outcome, apply::WriteOutcome::Written { .. }))
         .map(|outcome| outcome.tag.to_string())
+        .chain(
+            report
+                .aliases
+                .iter()
+                .filter(|(tag, state)| {
+                    **state == graph::AliasState::Present
+                        && report
+                            .rows
+                            .iter()
+                            .all(|row| &row.tag != *tag || row.status == graph::SlotStatus::Ok)
+                })
+                .map(|(tag, _)| tag.to_string()),
+        )
         .chain(report.index_findings.iter().map(|finding| match finding {
             graph::IndexFinding::Stale { tag, .. } | graph::IndexFinding::NotCommitted { tag } => tag.to_string(),
         }))
@@ -348,6 +364,30 @@ mod tests {
             announce_tags(&stale, &[]),
             ["latest"],
             "an alias the index never committed is the one drift a repair cannot close itself"
+        );
+    }
+
+    #[test]
+    fn an_alias_already_correct_is_announced_though_nothing_was_written() {
+        // A retry after a publish whose announce failed: the first run moved the aliases, this one finds
+        // them current and writes nothing, so announcing only what landed would leave them out of the index.
+        let mut current = report();
+        current.aliases.insert(
+            AliasTag::Version(Version::parse("3.28").expect("fixture version parses")),
+            graph::AliasState::Present,
+        );
+        current
+            .aliases
+            .insert(AliasTag::Root { variant: None }, graph::AliasState::Present);
+        current.aliases.insert(
+            AliasTag::Version(Version::parse("3").expect("fixture version parses")),
+            graph::AliasState::Absent,
+        );
+
+        assert_eq!(
+            announce_tags(&current, &[]),
+            ["3.28", "latest"],
+            "a current alias belongs in the file, an absent one does not"
         );
     }
 }

@@ -199,7 +199,7 @@ There is no conditional-request guard, so avoid repairing a repository with a pu
 
 Reaching the public index with the fix is a second hop through `ocx package announce`. Refreshing one machine's local copy is `ocx index update`'s job.
 
-`--tags-file` records exactly the tags whose write landed (not `raced`, `refused` or `failed` ones), unioned with every tag an index-staleness finding names, so one file covers both hops. It is written on every run, empty included, so a workflow can feed it to `announce` unconditionally.
+`--tags-file` records the tags whose write landed (not `raced`, `refused` or `failed` ones) and the in-scope tags that already carry the expected content, unioned with every tag an index-staleness finding names, so one file covers both hops and a retry after a failed announce still lists the tags the first run moved. It is written on every run, empty included, so a workflow can feed it to `announce` unconditionally.
 
 A preview contributes no landed tag, and its plan is in the JSON report as each entry's `planned`.
 

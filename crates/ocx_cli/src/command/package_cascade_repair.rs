@@ -136,8 +136,9 @@ impl PackageCascadeRepair {
 /// finding names, and every in-scope alias that already carries exactly the expected content (a
 /// retry whose first run moved the aliases but never announced them). Never a raced, failed,
 /// refused or unattempted write, since announce commits whatever the registry serves and would
-/// publish a digest this run never wrote. `scope` bounds the current-alias half to the aliases the
-/// requested build tag writes (empty for an alias or whole-graph request), so a candidate's announce never creates a floating tag.
+/// publish a digest this run never wrote. `scope` bounds the written and current-alias halves to the
+/// aliases the requested build tag owns, so a candidate's announce never creates a floating tag; an
+/// empty scope (alias or whole-graph request) leaves written aliases unbounded.
 fn announce_tags(
     report: &graph::CascadeReport,
     outcomes: &[apply::RepairOutcome],
@@ -145,7 +146,10 @@ fn announce_tags(
 ) -> Vec<String> {
     outcomes
         .iter()
-        .filter(|outcome| matches!(outcome.outcome, apply::WriteOutcome::Written { .. }))
+        .filter(|outcome| {
+            matches!(outcome.outcome, apply::WriteOutcome::Written { .. })
+                && (scope.is_empty() || scope.contains(&outcome.tag))
+        })
         .map(|outcome| outcome.tag.to_string())
         .chain(
             report
@@ -423,6 +427,24 @@ mod tests {
             announce_tags(&current, &[], &scope(&["1.1.0-beta"])),
             ["1.1.0-beta"],
             "a candidate that announced `latest` would create a floating tag row"
+        );
+    }
+
+    #[test]
+    fn a_candidate_request_never_announces_a_drifted_alias_its_repair_rewrote() {
+        let latest = apply::RepairOutcome {
+            tag: AliasTag::Root { variant: None },
+            outcome: apply::WriteOutcome::Written {
+                digest: digest(),
+                verified: true,
+                dropped: Vec::new(),
+            },
+        };
+
+        assert_eq!(
+            announce_tags(&report(), &[landed("1.1.0-beta"), latest], &scope(&["1.1.0-beta"])),
+            ["1.1.0-beta"],
+            "a rewritten `latest` outside the candidate's scope would create a floating tag row"
         );
     }
 

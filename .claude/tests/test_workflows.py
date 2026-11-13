@@ -4501,6 +4501,10 @@ def _announce_token_findings(documents: list[tuple[str, dict]]) -> list[str]:
         for step in job.get("steps") or []:
             if "OCX_ANNOUNCE_TOKEN" in (step.get("env") or {}) and "package announce" not in str(step.get("run")):
                 findings.append(f"{where}: step {step.get('name')!r} carries OCX_ANNOUNCE_TOKEN without announcing")
+            if "package announce" in str(step.get("run")):
+                write_auth = sorted(k for k in (step.get("env") or {}) if k.startswith("OCX_AUTH_"))
+                if write_auth:
+                    findings.append(f"{where}: announce step {step.get('name')!r} carries registry credentials {write_auth}")
             if "package prune" in str(step.get("run")) and "package announce" in str(step.get("run")):
                 findings.append(f"{where}: step {step.get('name')!r} prunes and announces in one step")
     return findings
@@ -4516,11 +4520,17 @@ def test_the_announce_token_sweep_reds_a_prune_step_that_carries_it() -> None:
     assert _announce_token_findings(_mutated("release.yml", old, new))
 
 
+def test_the_announce_token_sweep_reds_an_announce_step_that_carries_a_registry_credential() -> None:
+    old = "          OCX_ANNOUNCE_TOKEN: ${{ secrets.OCX_ANNOUNCE_TOKEN }}\n        run: ocx package announce --tags-from-registry"
+    new = "          OCX_AUTH_ghcr_io_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n" + old
+    assert _announce_token_findings(_mutated("release.yml", old, new))
+
+
 def test_the_stamped_release_build_neither_reads_nor_writes_the_remote_cache() -> None:
     """Flags on the command line outrank the baseline rc's `--remote_cache`, so signed bytes never come from a cache."""
     tasks = yaml.safe_load(CROSS_TASKFILE.read_text(encoding="utf-8"))["tasks"]
     body = "\n".join(c["cmd"] for c in tasks["build:release"]["cmds"] if isinstance(c, dict))
     set_line = next(line for line in body.splitlines() if line.lstrip().startswith("set -- "))
-    for flag in ("--remote_cache=", "--noremote_accept_cached", "--noremote_upload_local_results"):
+    for flag in ("--remote_cache=", "--noremote_accept_cached", "--noremote_upload_local_results", "--disk_cache="):
         assert re.search(rf"(?<!\S){re.escape(flag)}(?!\S)", set_line), f"build:release does not pass {flag}"
     assert body.count('"$@"') == 2, "the build and the cquery must share one argument list"

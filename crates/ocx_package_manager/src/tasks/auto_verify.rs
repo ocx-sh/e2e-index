@@ -302,7 +302,10 @@ impl PackageManager {
                     ..
                 })),
             ) if auto_verify.user_opted_out => {
-                log::debug!("committed index root unreadable for '{resolved}', skipping verification: {error}");
+                log::debug!(
+                    "committed index root unreadable for '{resolved}', skipping verification: {chain}",
+                    chain = ocx_util::error::render_chain(&error)
+                );
                 self.warn_skipped_once(auto_verify);
                 return Ok(false);
             }
@@ -380,7 +383,10 @@ impl PackageManager {
                 Err(error) if has_key => {
                     // A keyless candidate on a root that cannot check it aborts the scan, so it is dropped from
                     // the rounds instead; a round left with no key to try keeps the resolution error.
-                    log::debug!("full trust root unavailable, verifying key candidates only: {error}");
+                    log::debug!(
+                        "full trust root unavailable, verifying key candidates only: {chain}",
+                        chain = ocx_util::error::render_chain(&error)
+                    );
                     if !keep_key_backends(rounds) {
                         return Err(error);
                     }

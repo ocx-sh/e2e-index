@@ -148,6 +148,16 @@ def cargo_version(root: Path) -> str:
         return tomllib.load(handle)["workspace"]["package"]["version"]
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse every 3xx: the default handler replays `Authorization` at the redirect target, even across origins."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001 - urllib's signature
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def ghcr_package_exists(token: str) -> bool:
     """True when the ghcr.io dev package answers a tags listing for this token."""
     request = urllib.request.Request(
@@ -157,7 +167,7 @@ def ghcr_package_exists(token: str) -> bool:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=20):
+        with _OPENER.open(request, timeout=20):
             return True
     except urllib.error.HTTPError as err:
         if err.code in (401, 403, 404):

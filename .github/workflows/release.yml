@@ -80,7 +80,8 @@ env:
 concurrency:
   # A release and a candidate share a group (they write the same package's version tags); a dev build has its own.
   group: release-${{ inputs.mode == 'dev' && 'dev' || 'release' }}
-  # A half-published release is worse than a queued one.
+  # Only one run waits per group: a newer dispatch replaces a run still waiting. A half-published release is worse
+  # than a queued one.
   cancel-in-progress: false
 
 jobs:
@@ -271,6 +272,10 @@ jobs:
           # Only a release pins its manifests with a keep tag; a candidate or a dev build stays removable.
           [[ "$MODE" == release ]] || flags+=(--no-keep-tag)
           # Rows come in on fd 3 so no command in the body can consume them from stdin.
+          if [[ -z "$PLATFORMS" ]]; then
+            echo "::error::no platforms to publish"
+            exit 1
+          fi
           expected="$(grep -c . <<< "$PLATFORMS")"
           published=0
           while read -r asset platform <&3; do
@@ -309,6 +314,10 @@ jobs:
             identity="${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}"
           else
             identity="$RELEASE_IDENTITY"
+          fi
+          if [[ -z "$PLATFORMS" ]]; then
+            echo "::error::no platforms to verify"
+            exit 1
           fi
           expected="$(grep -c . <<< "$PLATFORMS")"
           verified=0
@@ -520,8 +529,6 @@ jobs:
       - name: Announce the pruned candidates
         if: ${{ steps.prune.outputs.pruned == 'true' }}
         env:
-          OCX_AUTH_ghcr_io_USER: ${{ github.actor }}
-          OCX_AUTH_ghcr_io_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OCX_ANNOUNCE_TOKEN: ${{ secrets.OCX_ANNOUNCE_TOKEN }}
         run: ocx package announce --tags-from-registry --index-repo "$INDEX_REPO" "$INDEX_PACKAGE"
 

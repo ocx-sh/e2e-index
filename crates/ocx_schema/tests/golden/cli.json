@@ -7801,7 +7801,7 @@
               "package",
               "push"
             ],
-            "version": 1,
+            "version": 2,
             "summary": "Publish a package's layers and metadata to a registry",
             "hidden": false,
             "external_subcommands": false,

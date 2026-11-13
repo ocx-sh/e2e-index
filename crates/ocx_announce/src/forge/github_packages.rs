@@ -81,13 +81,15 @@ impl GithubPackagesDeleter<'_> {
     ) -> Result<reqwest::Response, PruneError> {
         let response = builder.send().await.map_err(|error| forge_failure(&error))?;
         let status = response.status();
-        let exhausted = response
-            .headers()
+        let headers = response.headers();
+        let exhausted = headers
             .get("x-ratelimit-remaining")
             .and_then(|value| value.to_str().ok())
             == Some("0");
+        // The secondary limit answers 403 with `retry-after` and a non-zero remaining count.
+        let throttled = exhausted || headers.contains_key(reqwest::header::RETRY_AFTER);
         // A spent rate limit answers 403 (or 429) too; denying the credential for it would exit 80, not 75.
-        if status == reqwest::StatusCode::TOO_MANY_REQUESTS || (status == reqwest::StatusCode::FORBIDDEN && exhausted) {
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS || (status == reqwest::StatusCode::FORBIDDEN && throttled) {
             return Err(PruneError::Registry(
                 ocx_oci::client::error::ClientError::RegistryTransient(Box::new(std::io::Error::other(format!(
                     "GitHub Packages API: rate limit reached ({status}); retry later"
@@ -432,10 +434,11 @@ pub fn api_base_for_registry(host: &str) -> Option<String> {
     (!rest.is_empty()).then(|| format!("https://{rest}/api/v3"))
 }
 
-/// The forge a registry host implies, or `None` when the host says nothing.
+/// The forge a registry host implies: `ghcr.io` only. A `containers.<host>` name is not inferred because a
+/// registry host can come from an index document, and the credential would go to the host it names.
 #[must_use]
 pub fn forge_for_registry(host: &str) -> Option<ForgeKind> {
-    api_base_for_registry(host).map(|_| ForgeKind::GitHub)
+    host.eq_ignore_ascii_case("ghcr.io").then_some(ForgeKind::GitHub)
 }
 
 #[cfg(test)]
@@ -486,7 +489,9 @@ mod tests {
                     let (method, target) = (parts.next().unwrap_or_default(), parts.next().unwrap_or_default());
                     seen.lock().expect("requests lock").push(format!("{method} {target}"));
                     let (status, body) = route(method, target);
-                    let limit = if body.contains("rate limit") {
+                    let limit = if body.contains("secondary") {
+                        "Retry-After: 60\r\n"
+                    } else if body.contains("rate limit") {
                         "X-RateLimit-Remaining: 0\r\n"
                     } else {
                         ""
@@ -1058,6 +1063,7 @@ mod tests {
         for (status, body) in [
             (429u16, r#"{"message":"slow down"}"#),
             (403, r#"{"message":"API rate limit exceeded"}"#),
+            (403, r#"{"message":"You have exceeded a secondary rate limit"}"#),
         ] {
             let data = StubTransportData::new();
             let client = stub_client(&data);
@@ -1086,6 +1092,14 @@ mod tests {
             Some("https://api.github.com")
         );
         assert_eq!(forge_for_registry("GHCR.io"), Some(ForgeKind::GitHub));
+    }
+
+    #[test]
+    fn only_ghcr_implies_the_github_forge() {
+        // A registry host can arrive from an index document; inferring a forge from it would send the
+        // registry credential to a host another party chose.
+        assert_eq!(forge_for_registry("containers.git.acme.example"), None);
+        assert_eq!(forge_for_registry("localhost:5000"), None);
     }
 
     #[test]

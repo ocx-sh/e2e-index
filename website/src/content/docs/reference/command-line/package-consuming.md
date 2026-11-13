@@ -191,11 +191,11 @@ One is a selected tag listed without the ephemeral marker (exit 81). The other i
 
 On the registry API prune deletes registry tags only: never a digest, a platform manifest, a keep tag or a referrer, and it never writes the index. A keep tag pins the manifest past the tag's deletion: push ephemeral builds with `--no-keep-tag`, or prune frees no storage.
 
-A `ghcr.io` or `containers.<host>` registry cannot delete a tag, so prune deletes through the GitHub packages API with the credential ocx uses for that registry, and `--forge github` selects this on any other host. It deletes the version holding the tag, the platform manifests only that version lists, and the referrer tags of those manifests.
+A `ghcr.io` registry cannot delete a tag, so prune deletes through the GitHub packages API with the credential ocx uses for that registry. A GitHub Enterprise `containers.<host>` registry, or any other host, needs `--forge github`.
 
-A version that also carries a tag outside the selection exits 81. `--dry-run` lists the same set and deletes nothing.
+It deletes the version holding the tag, the platform manifests only that version lists, and the referrer tags of those manifests. A version that also carries a tag outside the selection exits 81.
 
-`--forge gitlab` is not supported.
+`--dry-run` lists the same set and deletes nothing. `--forge gitlab` is not supported.
 
 Pass `--tags-file PATH` to append each gone tag the index lists, then publish the removal with `ocx package announce --tags-file PATH`.
 

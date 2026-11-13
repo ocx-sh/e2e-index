@@ -58,9 +58,7 @@ import sys
 from pathlib import Path
 
 MARKERS: tuple[bytes, ...] = (b"placeholder-g00000000", b"ci.invalid", b"placeholder/placeholder")
-# `ocx_project`'s fault hook prints `__OCX_TESTING_FAULT=<fault>` from code that is compiled in every build but
-# never reached without the seam, so the name followed by `=` is not a declaration.
-SEAM_MARKER = re.compile(rb"__OCX_TESTING_(?!FAULT=)")
+SEAM_MARKER = re.compile(rb"__OCX_TESTING_")
 RUN_URL = re.compile(r"^https://github\.com/ocx-sh/ocx/actions/runs/\d+$")
 SHA = re.compile(r"^[0-9a-f]{40}$")
 EPOCH_PREFIX = "1970-01-01T00:00:00"

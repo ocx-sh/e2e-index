@@ -62,12 +62,12 @@ def test_scan_flags_a_declared_testing_variable(tmp_path: Path, name: str) -> No
     assert check_mod.main(["--scan", str(fixture)]) == EXIT_FINDING
 
 
-def test_scan_tolerates_the_fault_hooks_error_text(tmp_path: Path) -> None:
-    # `ocx_project`'s dead-code message names the variable with `=` in every build, seams or not.
-    clean = tmp_path / "clean-hook-text"
-    clean.write_bytes(b"\x7fELF" + b"\0" * 32 + b"__OCX_TESTING_FAULT=" + b"\0" * 8)
-    assert scan([clean]) == []
-    assert check_mod.main(["--scan", str(clean)]) == EXIT_CLEAN
+def test_scan_flags_the_fault_variable_followed_by_a_value(tmp_path: Path) -> None:
+    # No exemption: the name followed by `=` is a seam string too (D-23).
+    planted = tmp_path / "red-hook-text"
+    planted.write_bytes(b"\x7fELF" + b"\0" * 32 + b"__OCX_TESTING_FAULT=after_lock_write" + b"\0" * 8)
+    assert len(scan([planted])) == 1
+    assert check_mod.main(["--scan", str(planted)]) == EXIT_FINDING
 
 
 def test_scan_reports_every_occurrence_not_only_the_first(tmp_path: Path) -> None:

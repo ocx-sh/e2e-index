@@ -766,6 +766,30 @@ pub fn scope_filter(
     Ok(scope)
 }
 
+/// The aliases a repair of `requests` may announce although it wrote nothing: those whose expected
+/// content folds from a requested leaf, so a retry lists the rolling tags the build tag owns and never
+/// an ancestor it does not write (a prerelease's stable parents, an alias a newer release took over).
+/// An alias or whole-graph request names no leaf and owns none.
+pub fn announce_scope(
+    versions: &BTreeSet<Version>,
+    expected: &ExpectedGraph,
+    requests: &[Option<AliasTag>],
+) -> BTreeSet<AliasTag> {
+    let leaves = leaves(versions);
+    let wanted: Vec<&Version> = requests
+        .iter()
+        .filter_map(|request| match request {
+            Some(AliasTag::Version(version)) => leaves.iter().find(|leaf| ***leaf == *version).copied(),
+            _ => None,
+        })
+        .collect();
+    expected
+        .iter()
+        .filter(|(_, slots)| slots.values().any(|slot| wanted.contains(&&slot.source)))
+        .map(|(alias, _)| alias.clone())
+        .collect()
+}
+
 /// Whether `alias` sits under `ancestor` in the version trie.
 fn is_below(alias: &AliasTag, ancestor: &Version) -> bool {
     let AliasTag::Version(version) = alias else {

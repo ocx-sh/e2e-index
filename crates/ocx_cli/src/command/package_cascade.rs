@@ -42,6 +42,8 @@ pub struct PackageAudit {
     pub observation: graph::TagGraphObservation,
     pub expected: graph::ExpectedGraph,
     pub report: graph::CascadeReport,
+    /// The aliases a repair may announce though it wrote nothing: the requested build tags' write set.
+    pub announce_scope: std::collections::BTreeSet<graph::AliasTag>,
     /// True when a claiming index source serves no root yet, so empty `index_findings`
     /// means "not compared" rather than "agrees".
     pub index_layer_skipped: bool,
@@ -129,6 +131,7 @@ async fn audit_one(
     let scope = graph::scope_filter(&observation.versions(), &requests)
         .map_err(|error| UsageError::with_source(format!("cannot audit '{package}'"), error))?;
     let report = graph::diff(&observation, &expected, &scope);
+    let announce_scope = graph::announce_scope(&observation.versions(), &expected, &requests);
 
     let index_layer_skipped = index.is_some() && observation.index_root.is_none();
 
@@ -137,6 +140,7 @@ async fn audit_one(
         observation,
         expected,
         report,
+        announce_scope,
         index_layer_skipped,
     })
 }

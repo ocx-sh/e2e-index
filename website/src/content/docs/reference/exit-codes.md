@@ -422,6 +422,7 @@ A transient failure; the same command may succeed on retry.
 | `observe_raced` | A tag appeared between the two reads of one announce |
 | `oidc_token_unavailable` | The CI provider's OIDC token endpoint is unreachable or overloaded |
 | `project_locked` | Another process holds the lock on ocx.toml |
+| `prune_index_stale` | The index row for a tag names a different build than the registry serves |
 | `prune_refused_pending` | The index still lists a tag prune would delete, pending an announce |
 | `prune_tag_still_present` | A deleted tag is still present in the registry |
 | `registry_transient` | A registry operation failed in a way a retry may clear |

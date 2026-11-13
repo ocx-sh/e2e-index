@@ -9,7 +9,9 @@
 //! carries another tag refuses the run with `prune_shared_version`, as does a version another remaining tagged
 //! version's index lists. A 401 or 403 is the existing `DeleteDenied` (exit 80), a 404 on the owner or the
 //! listing too, but a spent rate limit (429, or 403 with `x-ratelimit-remaining: 0`) is a transient failure
-//! (exit 75).
+//! (exit 75). A protection read that finds no manifest, a listing that changes before the first DELETE, and
+//! a `sha256-<hex>.sig` or `.att` cosign tag are handled in `delete_set` and `delete`. The API has no conditional
+//! delete, so a candidate prune must not overlap a release push of identical bytes.
 
 use ocx_oci::{Digest, OciIdentifier};
 use ocx_package::prune::{DeletePlan, DeleteReport, PruneError, TagDeleter, confirm_gone};
@@ -90,11 +92,7 @@ impl GithubPackagesDeleter<'_> {
         let throttled = exhausted || headers.contains_key(reqwest::header::RETRY_AFTER);
         // A spent rate limit answers 403 (or 429) too; denying the credential for it would exit 80, not 75.
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS || (status == reqwest::StatusCode::FORBIDDEN && throttled) {
-            return Err(PruneError::Registry(
-                ocx_oci::client::error::ClientError::RegistryTransient(Box::new(std::io::Error::other(format!(
-                    "GitHub Packages API: rate limit reached ({status}); retry later"
-                )))),
-            ));
+            return Err(transient(&format!("rate limit reached ({status}); retry later")));
         }
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(denied(repository, tag, &format!("the forge answered {status}")));
@@ -146,11 +144,12 @@ impl GithubPackagesDeleter<'_> {
                 .as_array()
                 .ok_or_else(|| forge_failure(&"the version listing is not an array"))?;
             for entry in entries {
+                // A version the run cannot name is invisible to the protection pass, so it fails the run.
                 let (Some(id), Some(digest)) = (
                     entry.get("id").and_then(serde_json::Value::as_u64),
                     entry.get("name").and_then(serde_json::Value::as_str),
                 ) else {
-                    continue;
+                    return Err(forge_failure(&"a listed version has no id or name"));
                 };
                 let tags = entry
                     .pointer("/metadata/container/tags")
@@ -170,19 +169,28 @@ impl GithubPackagesDeleter<'_> {
         Err(forge_failure(&"the version listing never ended"))
     }
 
-    /// The digests an index manifest lists; empty for an image manifest.
-    async fn children(&self, repository: &OciIdentifier, digest: &str) -> Result<Vec<String>, PruneError> {
+    /// The digests an index manifest lists, empty for an image manifest; `None` when the registry does not
+    /// serve the manifest.
+    async fn children(&self, repository: &OciIdentifier, digest: &str) -> Result<Option<Vec<String>>, PruneError> {
         let parsed = Digest::try_from(digest).map_err(|error| forge_failure(&error))?;
-        // A version whose manifest the registry no longer serves lists nothing.
-        let manifest = match self.client.fetch_manifest(&repository.clone_with_digest(parsed)).await {
+        let manifest = match self
+            .client
+            .fetch_manifest_any_format(&repository.clone_with_digest(parsed))
+            .await
+        {
             Ok((_, manifest)) => manifest,
-            Err(ocx_oci::client::error::ClientError::ManifestNotFound(_)) => return Ok(Vec::new()),
+            Err(ocx_oci::client::error::ClientError::ManifestNotFound(_)) => return Ok(None),
             Err(error) => return Err(error.into()),
         };
-        Ok(match manifest {
+        Ok(Some(match manifest {
             ocx_oci::Manifest::ImageIndex(index) => index.manifests.into_iter().map(|entry| entry.digest).collect(),
             ocx_oci::Manifest::Image(_) => Vec::new(),
-        })
+        }))
+    }
+
+    /// [`children`](Self::children) for a version that is being deleted anyway: an unserved manifest lists nothing.
+    async fn children_or_none(&self, repository: &OciIdentifier, digest: &str) -> Result<Vec<String>, PruneError> {
+        Ok(self.children(repository, digest).await?.unwrap_or_default())
     }
 }
 
@@ -215,6 +223,7 @@ impl TagDeleter for GithubPackagesDeleter<'_> {
 
         let set = self.delete_set(repository, &plan.tags, &versions, &roots).await?;
         refuse_shared(repository, &plan.tags, &set)?;
+        refuse_stale_rows(repository, plan, &found, &versions)?;
 
         if plan.dry_run {
             for version in &set {
@@ -224,6 +233,13 @@ impl TagDeleter for GithubPackagesDeleter<'_> {
                 .would_delete
                 .extend(found.into_iter().map(|(tag, _)| tag.clone()));
             return Ok(());
+        }
+        // The listing is minutes old by now; a version that moved or appeared since would be deleted on stale facts.
+        let fresh = self.list_versions(collection, repository, first_tag).await?;
+        if !listing_unchanged(&set, &plan.tags, &fresh) {
+            return Err(transient(
+                "the package changed while the delete set was computed; retry",
+            ));
         }
         // Roots lead the set. A tag is reported the moment its own version is gone, so a later failure
         // on a platform or referrer version cannot relabel it as untouched.
@@ -288,7 +304,15 @@ impl GithubPackagesDeleter<'_> {
             .filter(|version| !is_root(version) && !version.tags.is_empty())
         {
             let other_tag = version.tags.first().cloned().unwrap_or_default();
-            for child in self.children(repository, &version.digest).await? {
+            // An unserved manifest protects nothing, so a version kept on the registry's word alone is
+            // read as unknown, never as empty: the run stops before any DELETE.
+            let children = self.children(repository, &version.digest).await?.ok_or_else(|| {
+                transient(&format!(
+                    "the manifest of kept version {} ({}) is not served; retry",
+                    version.id, version.digest
+                ))
+            })?;
+            for child in children {
                 protected.push((child, other_tag.clone()));
             }
         }
@@ -304,7 +328,7 @@ impl GithubPackagesDeleter<'_> {
         }
         let mut set: Vec<&Version> = roots.to_vec();
         for root in roots {
-            for child in self.children(repository, &root.digest).await? {
+            for child in self.children_or_none(repository, &root.digest).await? {
                 if protected.iter().any(|(digest, _)| *digest == child) {
                     continue;
                 }
@@ -318,12 +342,15 @@ impl GithubPackagesDeleter<'_> {
         let mut position = 0;
         while let Some(&member) = set.get(position) {
             position += 1;
-            let wanted = fallback_tag(&member.digest);
-            for carrier in versions.iter().filter(|version| version.tags.contains(&wanted)) {
+            let wanted = carrier_tags(&member.digest);
+            for carrier in versions
+                .iter()
+                .filter(|version| version.tags.iter().any(|tag| wanted.contains(tag)))
+            {
                 if !push_unique(&mut set, carrier) {
                     continue;
                 }
-                for referrer in self.children(repository, &carrier.digest).await? {
+                for referrer in self.children_or_none(repository, &carrier.digest).await? {
                     if let Some(version) = by_digest(&referrer) {
                         push_unique(&mut set, version);
                     }
@@ -332,6 +359,55 @@ impl GithubPackagesDeleter<'_> {
         }
         Ok(set)
     }
+}
+
+/// Whether every member of `set` is still listed with the same digest and tags, and no version outside it
+/// carries a requested tag.
+fn listing_unchanged(set: &[&Version], requested: &[String], fresh: &[Version]) -> bool {
+    let sorted = |tags: &[String]| {
+        let mut tags = tags.to_vec();
+        tags.sort();
+        tags
+    };
+    let members_hold = set.iter().all(|member| {
+        fresh
+            .iter()
+            .any(|now| now.id == member.id && now.digest == member.digest && sorted(&now.tags) == sorted(&member.tags))
+    });
+    let tags_stay = fresh
+        .iter()
+        .filter(|now| now.tags.iter().any(|tag| requested.contains(tag)))
+        .all(|now| set.iter().any(|member| member.id == now.id));
+    members_hold && tags_stay
+}
+
+/// Refuses when the version carrying a tag is not the digest the index row for that tag names: the row is
+/// stale, and the delete would remove a different build than the one the index vouched for.
+#[expect(
+    clippy::result_large_err,
+    reason = "refusals are cold and the error is the shared PruneError; boxing would only allocate on the refusal path"
+)]
+fn refuse_stale_rows(
+    repository: &OciIdentifier,
+    plan: &DeletePlan,
+    found: &[(&String, u64)],
+    versions: &[Version],
+) -> Result<(), PruneError> {
+    for (tag, indexed) in &plan.indexed {
+        let served = found
+            .iter()
+            .find(|(found_tag, _)| *found_tag == tag)
+            .and_then(|(_, id)| versions.iter().find(|version| version.id == *id));
+        if let Some(served) = served.filter(|version| version.digest != indexed.to_string()) {
+            return Err(PruneError::IndexStale {
+                repository: repository.to_string(),
+                tag: tag.clone(),
+                indexed: indexed.to_string(),
+                served: served.digest.clone(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Adds `version` unless the set holds it; whether it was added.
@@ -375,7 +451,13 @@ fn fallback_tag(digest: &str) -> String {
     digest.replace(':', "-")
 }
 
-/// Refuses when a version in the set carries a tag that is neither requested nor the fallback or keep tag
+/// The tags a referrer of `digest` may hang off: the referrers fallback tag and the cosign `.sig` and `.att` tags.
+fn carrier_tags(digest: &str) -> [String; 3] {
+    let fallback = fallback_tag(digest);
+    [format!("{fallback}.sig"), format!("{fallback}.att"), fallback]
+}
+
+/// Refuses when a version in the set carries a tag that is neither requested nor a carrier or keep tag
 /// of a manifest in the set.
 #[expect(
     clippy::result_large_err,
@@ -384,9 +466,8 @@ fn fallback_tag(digest: &str) -> String {
 fn refuse_shared(repository: &OciIdentifier, requested: &[String], set: &[&Version]) -> Result<(), PruneError> {
     let mut allowed: Vec<String> = requested.to_vec();
     for member in set {
-        let fallback = fallback_tag(&member.digest);
-        allowed.push(format!("__ocx.keep.{fallback}"));
-        allowed.push(fallback);
+        allowed.push(format!("__ocx.keep.{}", fallback_tag(&member.digest)));
+        allowed.extend(carrier_tags(&member.digest));
     }
     for member in set {
         if let Some(other) = member.tags.iter().find(|tag| !allowed.contains(tag)) {
@@ -407,6 +488,13 @@ async fn ok_json(response: reqwest::Response) -> Result<serde_json::Value, Prune
         return Err(forge_failure(&format!("the forge answered {status}")));
     }
     response.json().await.map_err(|error| forge_failure(&error))
+}
+
+/// A failure a retry may clear (exit 75); the message never carries the credential.
+fn transient(cause: &str) -> PruneError {
+    PruneError::Registry(ocx_oci::client::error::ClientError::RegistryTransient(Box::new(
+        std::io::Error::other(format!("GitHub Packages API: {cause}")),
+    )))
 }
 
 /// A forge failure as a registry failure; the message never carries the credential.
@@ -584,6 +672,7 @@ mod tests {
         DeletePlan {
             repository: repository(),
             tags: tags.iter().map(ToString::to_string).collect(),
+            indexed: Vec::new(),
             dry_run,
         }
     }
@@ -705,6 +794,7 @@ mod tests {
         serve(&data, &index_digest, index_bytes);
         serve(&data, &durable_digest, durable_bytes);
         serve(&data, &fallback_digest, fallback_bytes);
+        serve(&data, &a, index(&[]).0);
         let mut a_tags = vec![];
         a_tags.extend(extra_tag_on_a);
         let fallback_tag = fallback(&index_digest);
@@ -751,6 +841,7 @@ mod tests {
         let (index_bytes, index_digest) = index(&[&a, &b]);
         let data = StubTransportData::new();
         serve(&data, &index_digest, index_bytes);
+        serve(&data, &a, index(&[]).0);
         confirm_all_gone(&data, 1);
         let client = stub_client(&data);
         let keep = format!("__ocx.keep.{}", fallback(&a));
@@ -1083,6 +1174,228 @@ mod tests {
                 "{status}: {error:?}"
             );
         }
+    }
+
+    fn is_transient(error: &PruneError) -> bool {
+        matches!(
+            error,
+            PruneError::Registry(ocx_oci::client::error::ClientError::RegistryTransient(_))
+        )
+    }
+
+    #[tokio::test]
+    async fn a_kept_version_whose_manifest_is_not_served_stops_the_run_before_any_delete() {
+        let (root_bytes, root_digest) = index(&[]);
+        let data = StubTransportData::new();
+        serve(&data, &root_digest, root_bytes);
+        let client = stub_client(&data);
+        let versions = vec![
+            version(1, &root_digest, &["old"]),
+            version(2, &digest("durable"), &["1.0.0"]),
+        ];
+        let fake = Fake::start(route("Organization", versions)).await;
+
+        let mut report = DeleteReport::default();
+        let error = deleter(&client, &fake.base)
+            .delete(&plan(&["old"], false), &mut report)
+            .await
+            .expect_err("a kept version nobody can read protects nothing");
+
+        assert!(is_transient(&error), "{error:?}");
+        assert!(fake.deletes().is_empty(), "{:?}", fake.requests());
+    }
+
+    #[tokio::test]
+    async fn manifests_are_read_accepting_the_docker_manifest_list() {
+        let graph = graph(&["old"], None);
+        confirm_all_gone(&graph.data, 1);
+        let client = stub_client(&graph.data);
+        let fake = Fake::start(route("Organization", graph.versions.clone())).await;
+
+        deleter(&client, &fake.base)
+            .delete(&plan(&["old"], true), &mut DeleteReport::default())
+            .await
+            .expect("dry run");
+
+        let accepted = graph.data.read().accepted_media_types.clone();
+        assert!(!accepted.is_empty());
+        assert!(
+            accepted.iter().all(|types| types
+                .iter()
+                .any(|t| t == "application/vnd.docker.distribution.manifest.list.v2+json")),
+            "{accepted:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_listed_version_without_an_id_or_name_fails_the_run_before_any_delete() {
+        let (index_bytes, index_digest) = index(&[]);
+        let data = StubTransportData::new();
+        serve(&data, &index_digest, index_bytes);
+        let client = stub_client(&data);
+        let versions = vec![version(7, &index_digest, &["old"]), serde_json::json!({"id": 9})];
+        let fake = Fake::start(route("Organization", versions)).await;
+
+        let mut report = DeleteReport::default();
+        let error = deleter(&client, &fake.base)
+            .delete(&plan(&["old"], false), &mut report)
+            .await
+            .expect_err("an unreadable listing entry");
+
+        assert!(
+            matches!(
+                &error,
+                PruneError::Registry(ocx_oci::client::error::ClientError::Registry(_))
+            ),
+            "{error:?}"
+        );
+        assert!(fake.deletes().is_empty());
+    }
+
+    /// Serves `before` for the first versions listing and `after` for every later one.
+    fn relisted(
+        before: Vec<serde_json::Value>,
+        after: Vec<serde_json::Value>,
+    ) -> impl Fn(&str, &str) -> (u16, String) + Send + Sync + 'static {
+        let (first, later) = (route("Organization", before), route("Organization", after));
+        let listings = std::sync::atomic::AtomicUsize::new(0);
+        move |method, target| {
+            if method == "GET" && target.contains("/versions?") {
+                let seen = listings.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                return if seen == 0 {
+                    first(method, target)
+                } else {
+                    later(method, target)
+                };
+            }
+            first(method, target)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_listing_that_changes_before_the_first_delete_aborts_with_nothing_deleted() {
+        let (index_bytes, index_digest) = index(&[]);
+        let data = StubTransportData::new();
+        serve(&data, &index_digest, index_bytes);
+        let client = stub_client(&data);
+        let before = vec![version(7, &index_digest, &["old"])];
+        let gone = vec![];
+        let retagged = vec![version(7, &index_digest, &["old", "1.0.0"])];
+        let swapped = vec![version(7, &index_digest, &[]), version(8, &digest("new"), &["old"])];
+        for after in [gone, retagged, swapped] {
+            let fake = Fake::start(relisted(before.clone(), after.clone())).await;
+            let mut report = DeleteReport::default();
+            let error = deleter(&client, &fake.base)
+                .delete(&plan(&["old"], false), &mut report)
+                .await
+                .expect_err("the package changed");
+
+            assert!(is_transient(&error), "{after:?}: {error:?}");
+            assert!(fake.deletes().is_empty(), "{after:?}: {:?}", fake.requests());
+            assert!(report.deleted.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_relisting_still_deletes() {
+        let (index_bytes, index_digest) = index(&[]);
+        let data = StubTransportData::new();
+        serve(&data, &index_digest, index_bytes);
+        confirm_all_gone(&data, 1);
+        let client = stub_client(&data);
+        let listing = vec![version(7, &index_digest, &["old"])];
+        let fake = Fake::start(relisted(listing.clone(), listing)).await;
+
+        let mut report = DeleteReport::default();
+        deleter(&client, &fake.base)
+            .delete(&plan(&["old"], false), &mut report)
+            .await
+            .expect("deleted");
+
+        assert_eq!(report.deleted, ["old"]);
+    }
+
+    #[tokio::test]
+    async fn an_index_row_naming_another_build_than_the_tag_carries_refuses_before_any_delete() {
+        let (index_bytes, index_digest) = index(&[]);
+        let data = StubTransportData::new();
+        serve(&data, &index_digest, index_bytes);
+        let client = stub_client(&data);
+        let fake = Fake::start(route("Organization", vec![version(7, &index_digest, &["old"])])).await;
+        let row = Digest::try_from(digest("the row").as_str()).expect("a digest");
+        let mut stale = plan(&["old"], false);
+        stale.indexed = vec![("old".to_owned(), row)];
+
+        let mut report = DeleteReport::default();
+        let error = deleter(&client, &fake.base)
+            .delete(&stale, &mut report)
+            .await
+            .expect_err("a stale row");
+
+        match error {
+            PruneError::IndexStale { tag, served, .. } => {
+                assert_eq!((tag.as_str(), served.as_str()), ("old", index_digest.as_str()));
+            }
+            other => panic!("expected IndexStale, got {other:?}"),
+        }
+        assert!(fake.deletes().is_empty(), "{:?}", fake.requests());
+    }
+
+    #[tokio::test]
+    async fn an_index_row_naming_the_served_build_deletes() {
+        let (index_bytes, index_digest) = index(&[]);
+        let data = StubTransportData::new();
+        serve(&data, &index_digest, index_bytes);
+        confirm_all_gone(&data, 1);
+        let client = stub_client(&data);
+        let fake = Fake::start(route("Organization", vec![version(7, &index_digest, &["old"])])).await;
+        let mut matching = plan(&["old"], false);
+        matching.indexed = vec![(
+            "old".to_owned(),
+            Digest::try_from(index_digest.as_str()).expect("a digest"),
+        )];
+
+        let mut report = DeleteReport::default();
+        deleter(&client, &fake.base)
+            .delete(&matching, &mut report)
+            .await
+            .expect("deleted");
+
+        assert_eq!(report.deleted, ["old"]);
+    }
+
+    #[tokio::test]
+    async fn cosign_signature_and_attestation_tags_of_every_member_go_with_the_set() {
+        let (a, other) = (digest("a"), digest("other"));
+        let (root_bytes, root_digest) = index(&[&a]);
+        let (signature_bytes, signature_digest) = index(&[&other]);
+        let (attestation_bytes, attestation_digest) = index(&[&digest("attested")]);
+        let data = StubTransportData::new();
+        serve(&data, &root_digest, root_bytes);
+        serve(&data, &signature_digest, signature_bytes);
+        serve(&data, &attestation_digest, attestation_bytes);
+        confirm_all_gone(&data, 1);
+        let client = stub_client(&data);
+        let versions = vec![
+            version(1, &root_digest, &["old"]),
+            version(2, &a, &[]),
+            version(3, &signature_digest, &[&format!("{}.sig", fallback(&root_digest))]),
+            version(4, &attestation_digest, &[&format!("{}.att", fallback(&a))]),
+        ];
+        let fake = Fake::start(route("Organization", versions)).await;
+
+        let mut report = DeleteReport::default();
+        deleter(&client, &fake.base)
+            .delete(&plan(&["old"], false), &mut report)
+            .await
+            .expect("deleted");
+
+        let mut deleted = fake.deletes();
+        deleted.sort();
+        let expected: Vec<String> = (1..=4)
+            .map(|id| format!("DELETE /orgs/{OWNER}/packages/container/{PACKAGE}/versions/{id}"))
+            .collect();
+        assert_eq!(deleted, expected);
     }
 
     #[test]

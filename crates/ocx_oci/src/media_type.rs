@@ -20,6 +20,15 @@ pub const MEDIA_TYPE_SVG: &str = "image/svg+xml";
 
 pub const ACCEPTED_MANIFEST_MEDIA_TYPES: &[&str; 2] = &[MEDIA_TYPE_OCI_IMAGE_MANIFEST, MEDIA_TYPE_OCI_IMAGE_INDEX];
 
+/// Every manifest format a registry may hold under a version: the OCI pair plus the Docker v2 manifest and manifest
+/// list. A registry that enforces `Accept` (ghcr.io) answers 404 for a media type missing from it.
+pub const ANY_MANIFEST_TYPES: &[&str] = &[
+    MEDIA_TYPE_OCI_IMAGE_MANIFEST,
+    MEDIA_TYPE_OCI_IMAGE_INDEX,
+    "application/vnd.docker.distribution.manifest.v2+json",
+    "application/vnd.docker.distribution.manifest.list.v2+json",
+];
+
 /// Manifest media types a signer or verifier accepts when it fetches a referrer or a sidecar: the OCI image manifest
 /// and the Docker v2 manifest, never an index.
 pub const SIGNABLE_MANIFEST_TYPES: &[&str] = &[

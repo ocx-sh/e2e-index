@@ -1,1 +1,57 @@
-{"created":"2026-11-13","desc":{"description":"Fixture: the package's own release pipeline, trusted by its two workflow identities.","keywords":["e2e","release"],"readme":"sha256:4254e29a0b9f287f6be7ffc88cb1a7ff3e674598de68ca274e1b69fcee0ca01f","title":"e2e/release"},"name":"e2e.ocx.sh/e2e/release","publishers":[{"claims":{"build_signer_uri":"https://github.com/ocx-sh/e2e-package/.github/workflows/release.yml@refs/heads/main","source_repository_identifier":"1455949009","source_repository_owner_identifier":"263156444"},"kind":"keyless","oidc_issuer":"https://token.actions.githubusercontent.com"},{"claims":{"build_signer_uri":"https://github.com/ocx-sh/e2e-package/.github/workflows/backfill.yml@refs/heads/main","source_repository_identifier":"1455949009","source_repository_owner_identifier":"263156444"},"kind":"keyless","oidc_issuer":"https://token.actions.githubusercontent.com"}],"repository":"oci://ghcr.io/ocx-sh/e2e-package","status":"active","tags":{}}
+{
+  "created": "2026-11-13",
+  "desc": {
+    "description": "Fixture: the package's own release pipeline, trusted by its two workflow identities.",
+    "keywords": [
+      "e2e",
+      "release"
+    ],
+    "readme": "sha256:4254e29a0b9f287f6be7ffc88cb1a7ff3e674598de68ca274e1b69fcee0ca01f",
+    "title": "e2e/release"
+  },
+  "name": "e2e.ocx.sh/e2e/release",
+  "publishers": [
+    {
+      "claims": {
+        "build_signer_uri": "https://github.com/ocx-sh/e2e-package/.github/workflows/release.yml@refs/heads/main",
+        "source_repository_identifier": "1455949009",
+        "source_repository_owner_identifier": "263156444"
+      },
+      "kind": "keyless",
+      "oidc_issuer": "https://token.actions.githubusercontent.com"
+    },
+    {
+      "claims": {
+        "build_signer_uri": "https://github.com/ocx-sh/e2e-package/.github/workflows/backfill.yml@refs/heads/main",
+        "source_repository_identifier": "1455949009",
+        "source_repository_owner_identifier": "263156444"
+      },
+      "kind": "keyless",
+      "oidc_issuer": "https://token.actions.githubusercontent.com"
+    }
+  ],
+  "repository": "oci://ghcr.io/ocx-sh/e2e-package",
+  "status": "active",
+  "tags": {
+    "0.1.0_20261113203353": {
+      "content": "sha256:622afbffb312640ed899d2a5e9950ec8caf3af44d852d0f964574949eb38b10f",
+      "observed": "2026-11-13T20:38:55Z"
+    },
+    "0": {
+      "content": "sha256:6b81240bf2a5a61b535668af7f24e33746c9dbe87b73d76a0c180ba463cd6f15",
+      "observed": "2026-11-13T20:38:55Z"
+    },
+    "0.1": {
+      "content": "sha256:6b81240bf2a5a61b535668af7f24e33746c9dbe87b73d76a0c180ba463cd6f15",
+      "observed": "2026-11-13T20:38:55Z"
+    },
+    "0.1.0": {
+      "content": "sha256:6b81240bf2a5a61b535668af7f24e33746c9dbe87b73d76a0c180ba463cd6f15",
+      "observed": "2026-11-13T20:38:55Z"
+    },
+    "latest": {
+      "content": "sha256:6b81240bf2a5a61b535668af7f24e33746c9dbe87b73d76a0c180ba463cd6f15",
+      "observed": "2026-11-13T20:38:55Z"
+    }
+  }
+}

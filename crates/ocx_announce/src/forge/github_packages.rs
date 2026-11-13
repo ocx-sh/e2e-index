@@ -9,9 +9,8 @@
 //! carries another tag refuses the run with `prune_shared_version`, as does a version another remaining tagged
 //! version's index lists. A 401 or 403 is the existing `DeleteDenied` (exit 80), a 404 on the owner or the
 //! listing too, but a spent rate limit (429, or 403 with `x-ratelimit-remaining: 0`) is a transient failure
-//! (exit 75). A protection read that finds no manifest, a listing that changes before the first DELETE, and
-//! a `sha256-<hex>.sig` or `.att` cosign tag are handled in `delete_set` and `delete`. The API has no conditional
-//! delete, so a candidate prune must not overlap a release push of identical bytes.
+//! (exit 75). The API has no conditional delete, so a candidate prune must not overlap a release push of
+//! identical bytes.
 
 use ocx_oci::{Digest, OciIdentifier};
 use ocx_package::prune::{DeletePlan, DeleteReport, PruneError, TagDeleter, confirm_gone};

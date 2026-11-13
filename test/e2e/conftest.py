@@ -40,7 +40,11 @@ def new_client(e2e_binary: Path) -> None:
     version is still 0.6.6, and a `__testing` Bazel build reports the same version on channel `test`.
     """
     out = subprocess.run([str(e2e_binary), "--format", "json", "version"], capture_output=True, encoding="utf-8", check=True).stdout
-    contract = json.loads(out).get("contract", {}).get("commands", {}).get("package verify", 1)
+    # Every client back to v0.6.6 reports the key; absent means the `version` shape moved, and a default would skip silently.
+    try:
+        contract = json.loads(out)["contract"]["commands"]["package verify"]
+    except (KeyError, TypeError):
+        pytest.fail("`ocx version` no longer reports contract.commands['package verify']; update the new_client probe")
     if contract < 2:
         pytest.skip("needs a client with declared-publisher verification (`package verify` contract >= 2); this one reports 1")
 

@@ -263,6 +263,7 @@ def publish(root: Path, push: str | None, now: datetime | None = None) -> list[s
         f"export OCX_INSECURE_REGISTRIES='localhost:{listen}'",
         f'ocx.toml pin in a second checkout: ocx = "{GHCR}/{LOCAL_PATH}:{tag}"',
         "A lock made against this build is local-only: its digest exists only in this machine's registry.",
+        "check the build in use with: ocx exec -- ocx version --verbose",
     ]
 
 

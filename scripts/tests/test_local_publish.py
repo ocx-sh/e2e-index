@@ -56,6 +56,7 @@ def test_publish_builds_stamped_scans_then_publishes_locally(calls) -> None:
     assert lines[2] == "export OCX_INSECURE_REGISTRIES='localhost:15000'"
     assert 'ocx = "ghcr.io/ocx-sh/dev/cli:0.7.0-dev_20261113090807"' in lines[3]
     assert "local-only" in lines[4]
+    assert lines[5] == "check the build in use with: ocx exec -- ocx version --verbose"
 
 
 def test_the_port_comes_from_the_environment(

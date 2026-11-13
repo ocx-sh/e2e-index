@@ -199,3 +199,24 @@ def test_a_failed_start_in_the_same_state_dir_keeps_the_recorded_pid(
     with pytest.raises(lp.Refused):
         lp.start_registry(15000, tmp_path)
     assert (tmp_path / "zot.pid").read_text(encoding="utf-8") == "4242\n"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        lp.urllib.error.HTTPError("u", 500, "boom", {}, None),
+        lp.urllib.error.URLError("no route"),
+        TimeoutError("timed out"),
+    ],
+    ids=["http-500", "url-error", "timeout"],
+)
+def test_a_network_failure_on_the_package_check_refuses_without_the_token(
+    failure: BaseException, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(*_a: object, **_k: object) -> None:
+        raise failure
+
+    monkeypatch.setattr(lp.urllib.request, "urlopen", boom)
+    with pytest.raises(lp.Refused) as info:
+        lp.ghcr_package_exists("s3cret-token")
+    assert "s3cret-token" not in str(info.value)

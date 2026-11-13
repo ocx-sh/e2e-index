@@ -162,7 +162,9 @@ def ghcr_package_exists(token: str) -> bool:
     except urllib.error.HTTPError as err:
         if err.code in (401, 403, 404):
             return False
-        raise
+        raise Refused(f"{GHCR} answered HTTP {err.code} to the package check") from None
+    except (urllib.error.URLError, OSError) as err:
+        raise Refused(f"cannot reach {GHCR}: {type(err).__name__}") from None
 
 
 def run(cmd: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> None:

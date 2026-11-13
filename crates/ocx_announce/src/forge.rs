@@ -23,7 +23,7 @@ mod git_workspace;
 mod github;
 pub mod github_packages;
 mod gitlab;
-mod http;
+pub mod http;
 mod identity;
 mod kind;
 mod poll;

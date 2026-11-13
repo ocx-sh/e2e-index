@@ -56,6 +56,16 @@
     "0.0.1": {
       "content": "sha256:3bdcb0f837a918fa454e6f4d4ec98585ba5585239bf66a4143a5a244c84eb479",
       "observed": "2026-11-13T20:43:57Z"
+    },
+    "0.1.0-rc1_20261113204547": {
+      "content": "sha256:622afbffb312640ed899d2a5e9950ec8caf3af44d852d0f964574949eb38b10f",
+      "observed": "2026-11-13T20:50:44Z",
+      "ephemeral": true
+    },
+    "0.1.0-rc1": {
+      "content": "sha256:6b81240bf2a5a61b535668af7f24e33746c9dbe87b73d76a0c180ba463cd6f15",
+      "observed": "2026-11-13T20:50:44Z",
+      "ephemeral": true
     }
   }
 }

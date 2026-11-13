@@ -315,7 +315,7 @@ impl Leaf {
             ),
             Self::PackagePull => (1, const { &[OutputMode::report::<data::paths::Paths>()] }),
             Self::PackagePush => (
-                1,
+                2,
                 const {
                     &[
                         OutputMode::report::<data::push::PushReport>(),

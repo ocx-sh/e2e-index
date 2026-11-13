@@ -55,6 +55,8 @@ def run_ocx(e2e_binary: Path, tmp_path: Path) -> Run:
         lines = [f'[registries."{REGISTRY}"]', f'index = "{INDEX_URL}"']
         if signatures is not None:
             lines.append(f'signatures = "{signatures}"')
+        if INDEX_URL.startswith("http://"):  # a local fake root: the client refuses plain HTTP unless the host is insecure
+            lines += [f'[registries."{INDEX_URL.removeprefix("http://").rstrip("/")}"]', "insecure = true"]
         config = tmp_path / f"config-{signatures}.toml"
         config.write_text("\n".join(lines) + "\n", encoding="utf-8")
         env = {

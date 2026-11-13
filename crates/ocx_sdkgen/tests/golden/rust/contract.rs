@@ -76,7 +76,7 @@ pub const COMMANDS: &[(&str, u32)] = &[
     ("package sign", 1),
     ("package test", 1),
     ("package uninstall", 1),
-    ("package verify", 1),
+    ("package verify", 2),
     ("package which", 1),
     ("patch freeze", 1),
     ("patch publish", 1),

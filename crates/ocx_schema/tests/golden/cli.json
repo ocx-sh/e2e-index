@@ -8104,7 +8104,7 @@
                 "last": false,
                 "trailing_var_arg": false,
                 "stdin_secret": false,
-                "help": "After the push, attest this CycloneDX SBOM against the pushed manifest. A failure does not undo the push, is recorded in the report and sets the exit code"
+                "help": "Attest this CycloneDX SBOM against the pushed manifest, before any tag is written"
               },
               {
                 "id": "sign",
@@ -8131,7 +8131,7 @@
                 "last": false,
                 "trailing_var_arg": false,
                 "stdin_secret": false,
-                "help": "Sign each platform manifest this push writes, inline. A failure does not undo the push, is recorded in the report and sets the exit code"
+                "help": "Sign each platform manifest this push writes, inline, before any tag is written"
               },
               {
                 "id": "fulcio_url",
@@ -8528,7 +8528,7 @@
                 "last": false,
                 "trailing_var_arg": false,
                 "stdin_secret": false,
-                "help": "Narrow into one platform of an image index"
+                "help": "Platform of an image index to act on; defaults to the host platform"
               },
               {
                 "id": "output",
@@ -9846,7 +9846,7 @@
               "package",
               "verify"
             ],
-            "version": 1,
+            "version": 2,
             "summary": "Verify a published package's Sigstore signature (keyless, via OCI Referrers)",
             "hidden": false,
             "external_subcommands": false,
@@ -9881,7 +9881,7 @@
                 "last": false,
                 "trailing_var_arg": false,
                 "stdin_secret": false,
-                "help": "Narrow into one platform of an image index"
+                "help": "Platform of an image index to act on; defaults to the host platform"
               },
               {
                 "id": "certificate_identity",

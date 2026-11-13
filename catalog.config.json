@@ -1,0 +1,7 @@
+{
+  "sources": [{ "path": ".site-src", "root": true }],
+  "brand": { "title": "OCX e2e index", "wordmark": "e2e-index" },
+  "siteUrl": "https://ocx-sh.github.io/e2e-index/",
+  "description": "Fixture index for the OCX publisher-trust end-to-end tests.",
+  "nav": [{ "text": "github", "link": "https://github.com/ocx-sh/e2e-index" }]
+}

@@ -4,6 +4,7 @@
 load("@crates//:defs.bzl", "aliases", "all_crate_deps")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_doc_test", "rust_library", "rust_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//bazel/release:features.bzl", "testing_features")
 load("//crates/ocx_test_support:isolated.bzl", "crate_tree", "isolated_cases")
 
 package(default_visibility = ["//crates:__subpackages__"])
@@ -86,10 +87,7 @@ rust_library(
     ),
     # `app::seam`, as cargo's `--features ocx/__testing` compiles it into the
     # acceptance binary; the tier crates' libraries enable their own.
-    crate_features = select({
-        "//bazel/release:stamped": [],
-        "//conditions:default": ["__testing"],
-    }),
+    crate_features = testing_features(),
     crate_name = "ocx",
     edition = "2024",
     rustc_env = {"CARGO_MANIFEST_DIR": "crates/ocx_cli"} | select({
@@ -345,10 +343,7 @@ rust_doc_test(
     # rust_doc_test does not inherit the library's features: without these the
     # `__testing`-gated items' doctests silently drop out (C-031 name diff).
     # The library's select, spelled twice: `build:drift` compares the two lists.
-    crate_features = select({
-        "//bazel/release:stamped": [],
-        "//conditions:default": ["__testing"],
-    }),
+    crate_features = testing_features(),
 )
 
 crate_tree()

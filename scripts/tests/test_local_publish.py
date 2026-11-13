@@ -130,3 +130,72 @@ def test_starting_a_running_registry_is_a_no_op(
         lp.subprocess, "Popen", lambda *a, **k: pytest.fail("started a second zot")
     )
     assert lp.start_registry(15000, tmp_path) == "http://localhost:15000"
+
+
+@pytest.mark.parametrize("bad", ["abc", "0", "65536", "-1", ""])
+def test_a_bad_port_refuses_in_one_line_not_a_traceback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], bad: str
+) -> None:
+    monkeypatch.setenv("OCX_LOCAL_REGISTRY_PORT", bad)
+    assert lp.main(["registry"]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("local_publish: ") and len(err.splitlines()) == 1
+    assert lp.main(["publish"]) == 1
+
+
+def test_no_zot_on_path_refuses_naming_the_toolchain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(lp, "registry_up", lambda _port: False)
+    monkeypatch.setattr(lp.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(
+        lp.subprocess, "Popen", lambda *a, **k: pytest.fail("started without zot")
+    )
+    with pytest.raises(lp.Refused, match=r"zot.*toolchain"):
+        lp.start_registry(15000, tmp_path)
+
+
+def test_a_failed_start_on_another_port_leaves_the_running_registry_state_alone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    running = lp.state_dir(15000)
+    running.mkdir(parents=True)
+    (running / "zot.pid").write_text("4242\n", encoding="utf-8")
+    (running / "config.json").write_text("{}\n", encoding="utf-8")
+
+    class Dead:
+        pid = 99999
+        returncode = 3
+
+        def poll(self) -> int:
+            return 3
+
+    monkeypatch.setattr(lp, "registry_up", lambda _port: False)
+    monkeypatch.setattr(lp.shutil, "which", lambda _name: "/bin/zot")
+    monkeypatch.setattr(lp.subprocess, "Popen", lambda *a, **k: Dead())
+    with pytest.raises(lp.Refused, match="zot exited"):
+        lp.start_registry(15001, lp.state_dir(15001))
+    assert lp.state_dir(15001) != running
+    assert (running / "zot.pid").read_text(encoding="utf-8") == "4242\n"
+    assert (running / "config.json").read_text(encoding="utf-8") == "{}\n"
+
+
+def test_a_failed_start_in_the_same_state_dir_keeps_the_recorded_pid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "zot.pid").write_text("4242\n", encoding="utf-8")
+
+    class Dead:
+        pid = 99999
+        returncode = 3
+
+        def poll(self) -> int:
+            return 3
+
+    monkeypatch.setattr(lp, "registry_up", lambda _port: False)
+    monkeypatch.setattr(lp.shutil, "which", lambda _name: "/bin/zot")
+    monkeypatch.setattr(lp.subprocess, "Popen", lambda *a, **k: Dead())
+    with pytest.raises(lp.Refused):
+        lp.start_registry(15000, tmp_path)
+    assert (tmp_path / "zot.pid").read_text(encoding="utf-8") == "4242\n"

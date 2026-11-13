@@ -42,3 +42,10 @@ subjects = ["package sbom"]
 rule = "semantic"
 pointer = "/root/commands/14/commands/17/args/0"
 reason = "an omitted --platform now selects the host platform of an image index instead of acting on no platform"
+
+[[break]]
+document = "errors"
+subjects = ["*"]
+rule = "doc"
+pointer = "/$defs/ErrorDetail/x-ocx-enum/378"
+reason = "registry_delete_unsupported names where tag deletion goes on ghcr.io: ocx package prune --forge github"

@@ -32,6 +32,7 @@ cargo build --release -p ocx       # release CLI binary
 ## Publish a local build
 
 A second checkout, or a project of your own, can pin a build of this working tree. `task release:local:registry` starts a local [zot](https://zotregistry.dev/) registry on `localhost:15000` (override with `OCX_LOCAL_REGISTRY_PORT`) that syncs from `ghcr.io` on demand, and prints its URL. Running it twice changes nothing.
+`task release:local:registry:stop` stops the registry it started.
 
 `task release:local:publish` cross-builds the host triple as the stamped dev channel, scans it for test provenance, and pushes it unsigned to `localhost:<port>/ocx-sh/dev/cli` as `<cargo version>-dev_<UTC>`. It prints the tag and the lines a second checkout needs:
 

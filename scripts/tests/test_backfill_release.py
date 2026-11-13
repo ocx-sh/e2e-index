@@ -214,3 +214,24 @@ def test_a_platform_with_no_build_triple_fails_its_row_while_the_others_continue
     assert "FAILED" in rows["linux/riscv64"]
     assert "attested" in rows["linux/amd64"], "the other platform still gets its sbom"
     assert "linux/riscv64" in out.err and "no build triple" in out.err
+
+
+def test_generate_sbom_runs_the_current_toolchain_against_the_old_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An old tag's ocx.toml may not declare cargo-cyclonedx in the group the release uses."""
+    calls: list[tuple[list[str], Path]] = []
+
+    def stub(argv: list[str], cwd: Path, check: bool) -> None:
+        calls.append((argv, cwd))
+
+    monkeypatch.setattr(bf.subprocess, "run", stub)
+    (tmp_path / "source-v0.6.6").mkdir()
+    root = tmp_path / "root"
+    out = bf.generate_sbom(root, "0.6.6", "x86_64-unknown-linux-gnu", tmp_path)
+    argv, cwd = calls[-1]
+    assert cwd == root, "the tool resolves from the current checkout's ocx.toml"
+    assert argv[:4] == ["ocx", "exec", "-g", "docs"]
+    manifest = argv[argv.index("--manifest-path") + 1]
+    assert manifest == str(tmp_path / "source-v0.6.6/crates/ocx_cli/Cargo.toml")
+    assert out == tmp_path / "source-v0.6.6/crates/ocx_cli/ocx-x86_64-unknown-linux-gnu.cdx.json"

@@ -500,11 +500,11 @@ jobs:
       - name: Install the release ocx
         uses: ./.github/actions/release-ocx
       - name: Prune candidates of old releases
+        id: prune
         env:
           DAYS: ${{ inputs.prune_after_days }}
           OCX_AUTH_ghcr_io_USER: ${{ github.actor }}
           OCX_AUTH_ghcr_io_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OCX_ANNOUNCE_TOKEN: ${{ secrets.OCX_ANNOUNCE_TOKEN }}
         run: |
           set -euo pipefail
           ocx --remote --format json index list "$PACKAGE_RELEASE" | jq -r '.items[].tags[]?' > "$RUNNER_TEMP/tags.txt"
@@ -515,7 +515,15 @@ jobs:
             exit 0
           fi
           ocx package prune --forge github --tags-file "$RUNNER_TEMP/pruned.txt" "$PACKAGE_LOGICAL" "${selected[@]}"
-          ocx package announce --tags-from-registry --index-repo "$INDEX_REPO" "$INDEX_PACKAGE"
+          echo "pruned=true" >> "$GITHUB_OUTPUT"
+      # Only the announce carries the index token; prune does not need it.
+      - name: Announce the pruned candidates
+        if: ${{ steps.prune.outputs.pruned == 'true' }}
+        env:
+          OCX_AUTH_ghcr_io_USER: ${{ github.actor }}
+          OCX_AUTH_ghcr_io_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OCX_ANNOUNCE_TOKEN: ${{ secrets.OCX_ANNOUNCE_TOKEN }}
+        run: ocx package announce --tags-from-registry --index-repo "$INDEX_REPO" "$INDEX_PACKAGE"
 
   # After the release exists: the container images extract their binaries from the release assets.
   post-docker:

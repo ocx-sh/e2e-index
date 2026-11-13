@@ -4492,3 +4492,35 @@ def _mutated_runs(old: str, new: str) -> list[tuple[str, str]]:
 )
 def test_the_command_line_sweep_reds_a_flag_the_script_does_not_parse_and_a_required_one_dropped(old: str, new: str) -> None:
     assert _cli_findings(_mutated_runs(old, new))
+
+
+def _announce_token_findings(documents: list[tuple[str, dict]]) -> list[str]:
+    """`OCX_ANNOUNCE_TOKEN` reaches only a step that announces; a prune step does not need the index token."""
+    findings = []
+    for where, _, job in _jobs(documents):
+        for step in job.get("steps") or []:
+            if "OCX_ANNOUNCE_TOKEN" in (step.get("env") or {}) and "package announce" not in str(step.get("run")):
+                findings.append(f"{where}: step {step.get('name')!r} carries OCX_ANNOUNCE_TOKEN without announcing")
+            if "package prune" in str(step.get("run")) and "package announce" in str(step.get("run")):
+                findings.append(f"{where}: step {step.get('name')!r} prunes and announces in one step")
+    return findings
+
+
+def test_the_announce_token_is_scoped_to_the_announce_step() -> None:
+    assert _announce_token_findings(_documents()) == []
+
+
+def test_the_announce_token_sweep_reds_a_prune_step_that_carries_it() -> None:
+    old = '          OCX_AUTH_ghcr_io_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n        run: |\n          set -euo pipefail\n          ocx --remote --format json index list'
+    new = old.replace("        run:", "          OCX_ANNOUNCE_TOKEN: ${{ secrets.OCX_ANNOUNCE_TOKEN }}\n        run:", 1)
+    assert _announce_token_findings(_mutated("release.yml", old, new))
+
+
+def test_the_stamped_release_build_neither_reads_nor_writes_the_remote_cache() -> None:
+    """Flags on the command line outrank the baseline rc's `--remote_cache`, so signed bytes never come from a cache."""
+    tasks = yaml.safe_load(CROSS_TASKFILE.read_text(encoding="utf-8"))["tasks"]
+    body = "\n".join(c["cmd"] for c in tasks["build:release"]["cmds"] if isinstance(c, dict))
+    set_line = next(line for line in body.splitlines() if line.lstrip().startswith("set -- "))
+    for flag in ("--remote_cache=", "--noremote_accept_cached", "--noremote_upload_local_results"):
+        assert re.search(rf"(?<!\S){re.escape(flag)}(?!\S)", set_line), f"build:release does not pass {flag}"
+    assert body.count('"$@"') == 2, "the build and the cquery must share one argument list"

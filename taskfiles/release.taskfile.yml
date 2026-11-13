@@ -253,6 +253,12 @@ tasks:
     cmds:
       - python3 scripts/local_publish.py registry
 
+  local:registry:stop:
+    desc: 'Stop the local dev registry that local:registry started'
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - python3 scripts/local_publish.py registry --stop
+
   local:publish:
     desc: 'Build the host triple stamped dev, publish it unsigned to the local registry; PUSH=ghcr also pushes ghcr.io/ocx-sh/dev/cli'
     dir: '{{.ROOT_DIR}}'

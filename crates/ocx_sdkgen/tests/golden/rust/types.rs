@@ -3620,7 +3620,8 @@ pub enum ErrorDetail {
     ReferrersUnsupported,
     /// The registry rejected the request's authentication
     RegistryAuthFailed,
-    /// The registry does not delete tags
+    /// The registry API cannot delete tags; on ghcr.io, ocx package prune deletes them through
+    /// --forge github
     RegistryDeleteUnsupported,
     /// A registry operation failed in a way a retry may clear
     RegistryTransient,

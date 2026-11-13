@@ -6451,6 +6451,7 @@ mod tests {
             "ocx_package/src/cascade/apply.rs",
             "ocx_package/src/cascade/equivalence.rs",
             "ocx_package/src/prune/tests.rs",
+            "ocx_announce/src/forge/github_packages.rs", // test-only stub manifest key
         ];
 
         // One walk for both gates, floored on what it READ. They were two

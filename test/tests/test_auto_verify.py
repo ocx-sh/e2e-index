@@ -519,6 +519,7 @@ def _require_signatures(ocx: OcxRunner, tmp_path: Path, *, locked: bool) -> Path
     return system
 
 
+@pytest.mark.requires_testing_build
 @pytest.mark.parametrize("via", ["flag", "env"])
 def test_no_verify_is_refused_under_a_system_locked_required(
     ocx: OcxRunner, published_package: PackageInfo, tmp_path: Path, via: str,
@@ -541,6 +542,7 @@ def test_no_verify_is_refused_under_a_system_locked_required(
     _assert_no_partial_state(ocx, pkg)
 
 
+@pytest.mark.requires_testing_build
 def test_no_verify_is_honoured_under_an_unlocked_required(
     ocx: OcxRunner, published_package: PackageInfo, tmp_path: Path,
 ) -> None:

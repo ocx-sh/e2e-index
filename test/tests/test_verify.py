@@ -2016,7 +2016,7 @@ def test_verify_does_not_credit_a_signature_parked_on_the_index_to_the_platform_
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Omitted `--platform` resolves to the host platform — C-006 / S-007 / V-13
+# Omitted `--platform` resolves to the host platform
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -2040,7 +2040,7 @@ def _push_host_index_over(registry: str, repo: str, child: str, child_size: int,
 def test_verify_tag_without_platform_verifies_the_host_platform_manifest(
     ocx: OcxRunner, unique_repo: str
 ) -> None:
-    """V-13. A tag naming an unsigned index with a signed per-platform child verifies.
+    """A tag naming an unsigned index with a signed per-platform child verifies.
 
     Without ``--platform`` the index used to be the subject, which carries no
     signature when the publisher signs per platform (exit 79). The host
@@ -2066,7 +2066,7 @@ def test_verify_tag_without_platform_verifies_the_host_platform_manifest(
 def test_verify_index_digest_without_platform_is_the_index_itself(
     ocx: OcxRunner, unique_repo: str
 ) -> None:
-    """S-007. A digest identifier is the exact object: the unsigned index is not narrowed.
+    """A digest identifier is the exact object: the unsigned index is not narrowed.
 
     Same registry state as the cell above; only the identifier differs. If the
     digest were narrowed into the signed child this would exit 0.
@@ -2088,7 +2088,7 @@ def test_verify_index_digest_without_platform_is_the_index_itself(
 def test_verify_single_manifest_tag_without_platform_is_the_manifest(
     ocx: OcxRunner, unique_repo: str
 ) -> None:
-    """C-006. A tag naming one manifest is the subject; there is nothing to narrow, so nothing fails."""
+    """A tag naming one manifest is the subject; there is nothing to narrow, so nothing fails."""
     subject, size = cosign_artifacts.push_subject(ocx.registry, unique_repo, reference="v1")
     cosign_artifacts.push_bundle_referrer(
         ocx.registry, unique_repo, "keyless",

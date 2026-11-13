@@ -642,5 +642,5 @@ The operation as requested is not supported or not enabled by this registry, for
 | `forge_capability_unavailable` | The forge or project lacks a capability the transport needs |
 | `publishers_unrecognized` | The index lists publishers only a newer ocx understands |
 | `referrers_unsupported` | The registry supports neither the OCI Referrers API nor a referrers fallback tag |
-| `registry_delete_unsupported` | The registry does not delete tags |
+| `registry_delete_unsupported` | The registry API cannot delete tags; on ghcr.io, ocx package prune deletes them through --forge github |
 | `unsupported_key_backend` | A key reference names a recognised key backend this build does not implement |

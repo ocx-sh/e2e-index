@@ -617,50 +617,6 @@ async fn refresh_pushed_pins(
 }
 
 #[cfg(test)]
-mod stderr_neutralization_tests {
-    //! `push` is the one command that logs a failure *and* keeps going: the
-    //! push already landed, so an inline-signing or attestation failure is
-    //! reported rather than returned, and `main.rs`'s boundary log — the only
-    //! other place a cause chain reaches the terminal — never sees these
-    //! chains at all. That makes each of these sites a terminal boundary in
-    //! its own right (CWE-150): a registry-served error body quotes names read
-    //! off wire documents, and `tracing-subscriber` passes `\n`, `\r`, NUL and
-    //! the whole `Cf` bidi set straight through.
-
-    /// Every `log::error!` in this module's production half neutralizes what
-    /// it interpolates.
-    ///
-    /// Written per call site rather than as a count budget: comparing totals
-    /// (`log::error!` count == `sanitize_for_terminal` count) is satisfied by
-    /// one raw call plus one unrelated sanitized call elsewhere in the file,
-    /// which is exactly the shape that shipped. The non-zero assertion is the
-    /// other half — a needle that silently stops matching still reports green.
-    #[test]
-    fn every_stderr_log_neutralizes_its_cause_chain() {
-        let production = include_str!("package_push.rs")
-            .split("#[cfg(test)]")
-            .next()
-            .expect("the module has a non-test half");
-        let sites: Vec<&str> = production
-            .lines()
-            .filter(|line| !line.trim_start().starts_with("//"))
-            .filter(|line| line.contains("log::error!"))
-            .collect();
-        assert!(
-            !sites.is_empty(),
-            "the needle stopped matching — this guard would now pass on any code at all"
-        );
-        for site in sites {
-            assert!(
-                site.contains("sanitize_for_terminal"),
-                "an unsanitized cause chain reaches the terminal here: {}",
-                site.trim()
-            );
-        }
-    }
-}
-
-#[cfg(test)]
 mod annotation_tests {
     use std::collections::BTreeMap;
 

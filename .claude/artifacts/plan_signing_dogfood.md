@@ -11,7 +11,8 @@
 - **Step:** /hex-execute pass 2 done on the ocx side; remote META open (see report)
 - **Feature branch:** `hex/signing-dogfood` (ocx); `hex/signing-dogfood` in `.agents/worktrees/sat-ocx-mirror-release` (ocx-mirror, from its `origin/main`)
 - **Last update:** 2026-11-13 (pass 2: I1b items 1–3 red→green, item 4 deferred D-31; EU 1 block + warns fixed; H 2 rounds; D-30…D-32)
-- **Next:** META push + fixture/dev dispatches (M-1…M-11), Codex pass after its usage reset, then P-MIRROR, then `/hex-review`
+- **Next:** `/hex-execute .claude/artifacts/plan_signing_dogfood.md "apply xhigh-tier review findings"` — closing `/hex-review` (xhigh, 2026-11-14): Needs Work; gap rows R1-* appended to § Parallelization
+- Reviewed: f98026481d3e41704ee4f57f8cacf52c74fa7490
 
 ---
 
@@ -226,6 +227,11 @@ IDs are the coverage join keys. "Red" and "green" name the case each test must s
 | EU | all | end-user break pass | regression tests + fixes as found | 5 | I1 | — | merged |
 | H | all | ≤4 hardening review rounds | fixes | 6 | EU | — | merged (2 rounds; H2 found only smaller issues) |
 | P-MIRROR | ocx-mirror | C-021, V-17 | worktree `sat-ocx-mirror-release`: `.github/workflows/{release,backfill,oci-publish,deploy-dev,build-matrix,docs}.yml`, `ocx.toml`, `ocx.lock`, `taskfiles/release.taskfile.yml`, `AGENTS.md` | 7 | H, finalize push, M-10 green, M-14 green, M-11 | — | pending |
+| R1-SBOM | ocx, ocx-mirror | C-003, C-015, C-021 contradicts: the pinned cargo-cyclonedx 0.5.9 writes `<stem>.json`, the scripts expect `<stem>.cdx.<fmt>`; script-test stubs encode the wrong name | `scripts/release_assets.py`, `scripts/backfill_release.py` + tests; mirror `scripts/release_sbom.py`, `scripts/backfill_release.py` + tests | 8 | P-MIRROR | — | pending |
+| R1-MCACHE | ocx-mirror | C-021 / D-24 partial: the stamped `build:release` still reads the remote and disk Bazel caches | mirror `taskfiles/bazel.taskfile.yml` | 8 | P-MIRROR | — | pending |
+| R1-PRUNE | ocx | C-012 partial: the protection pass of the GitHub-packages delete set fails open (manifest not found, malformed version entry); a deleted version whose digest differs from the index row is neither refused nor reported | `crates/ocx_announce/src/forge/github_packages.rs`, `crates/ocx_package/src/prune.rs` + tests | 8 | P-PRUNE | review | pending |
+| R1-HARDEN | ocx, ocx-mirror | C-009, C-013, C-014 partial: cascade-repair tags file lists out-of-scope `Written` aliases; git-cliff installed unpinned in token-bearing steps; push-sign-order and index-host refusal red cases not shown reachable | `crates/ocx_cli/src/command/package_cascade_repair.rs`, `.github/workflows/release.yml` (both repos), `test/tests/test_push_sign_order.py`, `test/tests/test_package_prune.py` | 8 | P-WF, P-402, P-PRUNE | — | pending |
+| R1-DOCS | ocx | C-022 partial: GHCR row says no run is recorded though one is; gitlab.com row's measurement lives only in the discussion; verify section's identity is wrong for backfilled versions; push report prose for a failed `--sbom` | `website/src/content/docs/publishing/snapshot-tracks.md`, `getting-started/install-ocx.mdx`, `reference/command-line/package-publishing.md` | 8 | P-DOCS | — | pending |
 
 Shared generated surfaces: A0 owns every golden for the new surfaces; any later change to generated text (`cli.json` help, reference pages, `exit-codes.md`) and the `test/SUITE_FLOOR` bump plus new Bazel acceptance targets (`test/bazel.bzl`, `scripts/bazel_gate_proofs.py`) are done once, in I1a, from the case counts each pipeline records in its commit body. Wave 1 runs eight pipelines concurrently; serialise only Bazel/cargo builds (`flock -o .agents/acceptance-suite.lock` for acceptance runs; one Bazel build at a time).
 
@@ -321,6 +327,13 @@ Both: `task satellite:verify` if any ecosystem-crate API changed (`ocx_package`,
 1. Create `.agents/worktrees/sat-ocx-mirror-release` from ocx-mirror `origin/main`, branch `hex/signing-dogfood` (D-17).
 2. C-021 changes; `ocx.toml` pin to M-11's tag, `ocx lock`; actionlint; the mirror's own scoped checks.
 3. Pause for M-15/M-16; fix until V-17 is green.
+
+**R1-* (closing review gaps, 2026-11-14; each red first, then green).**
+- R1-SBOM: run the pinned `cargo cyclonedx` once to fix the real output name (`--override-filename <stem>.cdx`, or read `<stem>.json`); change every stub in the script tests to write what the real tool writes; one test that drives the real tool.
+- R1-MCACHE: give the mirror's `build:release` ocx's `--remote_cache= --disk_cache= --noremote_accept_cached --noremote_upload_local_results`, for build and cquery.
+- R1-PRUNE: in the protection pass, a manifest-not-found or malformed version entry refuses the whole prune (transient exit); refuse or at least report when the version deleted for a tag carries a digest other than the index row's.
+- R1-HARDEN: bound `announce_tags`' `Written` tags by the scope; git-cliff through the pinned release tool group in both repos; show `test_a_push_whose_signing_fails_writes_no_tag` red on the old order and assert the failure is the signing step; an acceptance case for the index-named non-ghcr.io host refusal through `execute`.
+- R1-DOCS: GHCR row tagged measured with run 43510835871 and the "no run recorded" sentence removed; gitlab.com row scoped to gitlab.com and the copy measurement; verify section names the backfill identity for versions released before signing; the failed-`--sbom` clause of the push report prose.
 
 ## META steps (remote acts; the meta-orchestrator only)
 

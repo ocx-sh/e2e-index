@@ -1682,16 +1682,16 @@ def prove_counts() -> int:
         f"stage-3's floor is {STAGE_FLOORS['stage-3'].minimum}, the union universe has 186",
     )
     expect(
-        ACCEPTANCE_MODULE_TARGETS == 195,
-        f"acceptance modules is {ACCEPTANCE_MODULE_TARGETS}, test/tests/ holds 195",
+        ACCEPTANCE_MODULE_TARGETS == 197,
+        f"acceptance modules is {ACCEPTANCE_MODULE_TARGETS}, test/tests/ holds 197",
     )
     expect(
-        ACCEPTANCE_RULE_TARGETS == 204,
-        f"acceptance rule targets is {ACCEPTANCE_RULE_TARGETS}, //test:all holds 204",
+        ACCEPTANCE_RULE_TARGETS == 206,
+        f"acceptance rule targets is {ACCEPTANCE_RULE_TARGETS}, //test:all holds 206",
     )
     expect(
-        STAGE_FLOORS["stage-4"].minimum == 398,
-        f"stage-4's floor is {STAGE_FLOORS['stage-4'].minimum}, `//...` has 398",
+        STAGE_FLOORS["stage-4"].minimum == 400,
+        f"stage-4's floor is {STAGE_FLOORS['stage-4'].minimum}, `//...` has 400",
     )
     expect(
         STAGE_FLOORS["stage-4"].minimum

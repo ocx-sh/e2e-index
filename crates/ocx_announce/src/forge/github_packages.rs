@@ -348,6 +348,10 @@ fn denied(repository: &OciIdentifier, tag: &str, message: &str) -> PruneError {
 }
 
 /// GitHub answers 404 for a package the token cannot read as well as for one that does not exist.
+#[expect(
+    clippy::result_large_err,
+    reason = "refusals are cold and the error is the shared PruneError; boxing would only allocate on the refusal path"
+)]
 fn refuse_not_found(response: &reqwest::Response, repository: &OciIdentifier, tag: &str) -> Result<(), PruneError> {
     if response.status() == reqwest::StatusCode::NOT_FOUND {
         return Err(denied(
@@ -366,6 +370,10 @@ fn fallback_tag(digest: &str) -> String {
 
 /// Refuses when a version in the set carries a tag that is neither requested nor the fallback or keep tag
 /// of a manifest in the set.
+#[expect(
+    clippy::result_large_err,
+    reason = "refusals are cold and the error is the shared PruneError; boxing would only allocate on the refusal path"
+)]
 fn refuse_shared(repository: &OciIdentifier, requested: &[String], set: &[&Version]) -> Result<(), PruneError> {
     let mut allowed: Vec<String> = requested.to_vec();
     for member in set {

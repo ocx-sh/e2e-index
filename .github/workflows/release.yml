@@ -313,7 +313,7 @@ jobs:
       # The one place a floating tag is written. Every platform above is pushed under the build tag, signed,
       # attested and verified before this step runs, so no floating tag moves before then; `cascade repair` only
       # re-points tags at content the registry already serves (it uploads nothing) and is scoped to this build tag.
-      # It also appends the tags it moved to the file `announce` reads.
+      # It also appends the tags it moved, or found already current, to the file `announce` reads.
       - name: Move the floating tags
         env:
           PACKAGE: ${{ needs.plan.outputs.package }}

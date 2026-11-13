@@ -6,6 +6,7 @@ dispatcher sets `OCX_E2E_BINARY` to the built `ocx`; nothing here starts a regis
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from collections.abc import Callable
@@ -14,7 +15,8 @@ from pathlib import Path
 import pytest
 
 REGISTRY = "e2e.ocx.sh"
-INDEX_URL = "https://ocx-sh.github.io/e2e-index"
+# Overridable so a case can be proven red and green against a local fake root.
+INDEX_URL = os.environ.get("OCX_E2E_INDEX_URL", "https://ocx-sh.github.io/e2e-index")
 
 Run = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -27,6 +29,20 @@ def e2e_binary() -> Path:
             pytest.fail("OCX_E2E_BINARY unset on CI: a skipped e2e run reads as green")
         pytest.skip("OCX_E2E_BINARY unset: the public e2e run is dispatched by ocx-sh/e2e-index client-e2e.yml")
     return Path(raw)
+
+
+@pytest.fixture(scope="session")
+def new_client(e2e_binary: Path) -> None:
+    """Skip unless the client enforces declared publishers (verify/sbom resolve the root's identities).
+
+    The probe is the `contract` the client reports for its own `package verify`: released <= 0.6.6 reports 1,
+    the declared-publisher client reports 2. A version compare cannot separate them: this branch's Cargo
+    version is still 0.6.6, and a `__testing` Bazel build reports 0.6.2 on channel `test`.
+    """
+    out = subprocess.run([str(e2e_binary), "--format", "json", "version"], capture_output=True, encoding="utf-8", check=True).stdout
+    contract = json.loads(out).get("contract", {}).get("commands", {}).get("package verify", 1)
+    if contract < 2:
+        pytest.skip("needs a client with declared-publisher verification (`package verify` contract >= 2); this one reports 1")
 
 
 @pytest.fixture()

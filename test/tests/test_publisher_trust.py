@@ -510,6 +510,27 @@ def test_s009_no_verify_installs_past_a_corrupt_committed_root(
     assert_installed(ocx)
 
 
+def test_s009_no_verify_installs_past_a_corrupt_committed_root_under_an_unlocked_required(
+    ocx: OcxRunner, unique_repo: str, tmp_path: Path, index_server, sigstore_stack,
+) -> None:
+    d = publish(ocx, unique_repo, tmp_path, index_server, [keyless(sigstore_stack)], signatures="required")
+    ocx.plain("index", "update", f"ocx.sh/{d.repository}")
+    roots = [p for p in (ocx.ocx_home / "index").rglob("pkg.json") if p.parent.name == unique_repo]
+    assert len(roots) == 1, f"expected one committed root, got {roots}"
+    roots[0].write_text("{ not json")
+
+    pinned = f"{d.logical}@{d.leaf_digest}"
+    refused = install(ocx, pinned)
+    assert refused.returncode != 0, f"a corrupt committed root must refuse without the opt-out:\n{refused.stderr}"
+    assert_nothing_installed(ocx)
+
+    roots[0].write_text("{ not json")  # the refused run may have healed it
+    result = install(ocx, pinned, flags=("--no-verify",))
+    assert result.returncode == 0, result.stderr
+    assert result.stderr.count(SKIPPED_WARNING) == 1, result.stderr
+    assert_installed(ocx)
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # An installed declared package carries its origin marker
 # ──────────────────────────────────────────────────────────────────────────────

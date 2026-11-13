@@ -160,7 +160,7 @@ def generate_sbom(root: Path, version: str, triple: str, out_dir: Path) -> Path:
             "ocx",
             "exec",
             "-g",
-            "release",
+            "docs",
             "--",
             "cargo",
             "cyclonedx",
@@ -169,11 +169,12 @@ def generate_sbom(root: Path, version: str, triple: str, out_dir: Path) -> Path:
             "--target",
             triple,
             "--manifest-path",
-            "crates/ocx_cli/Cargo.toml",
+            str(source / "crates" / "ocx_cli" / "Cargo.toml"),
             "--override-filename",
             stem,
         ],
-        cwd=source,
+        # The current checkout's pinned tool: an old tag's ocx.toml may not declare it in this group.
+        cwd=root,
         check=True,
     )
     return source / "crates" / "ocx_cli" / f"{stem}.cdx.json"

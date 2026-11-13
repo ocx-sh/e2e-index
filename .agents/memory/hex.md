@@ -264,6 +264,14 @@ research-axes:
 - Retro candidate (project-context): "Free-disk preflight before a build wave; cargo fmt truncated files at 0 bytes free" — ledger project-disk-full-fmt-truncation, .agents/retro/reports/2026-09-30.md.
 - Retro candidate (checklist-item): "A gate worktree's TMPDIR lives outside every checkout; project-discovery tests walk up into ocx.toml" — ledger project-gate-tmpdir-inside-checkout, .agents/retro/reports/2026-10-24.md.
 - Retro candidate (project-context): "zot-missing hint should name `ocx exec -- task …`; `ocx exec zot --` leaks OCX_GLOBAL=1" — ledger project-zot-hint-global-trampoline, .agents/retro/reports/2026-10-24.md.
+- Retro candidate (checklist-item): "rtk `ok`/`identical` summaries are not evidence for push or diff; decide from the remote SHA and difflib" — ledger rtk-proxy-false-success, .agents/retro/reports/2026-11-13.md.
+- Retro candidate (checklist-item): "verify:scoped omits test_exit_codes.py; run it for any CLI behaviour change before a finalize gate" — ledger project-scoped-gate-misses-suites, .agents/retro/reports/2026-11-13.md.
+- Retro candidate (project-context): "`task test:parallel --force -- <path>` takes paths relative to test/ (`tests/x.py`); `test/tests/x.py` collects 0" — ledger project-test-parallel-path-relative, .agents/retro/reports/2026-11-13.md.
+- Retro candidate (project-context): "Foreign-repo clones live outside the ocx tree; under .agents/worktrees/ cargo walks into ocx's workspace (exit 101)" — ledger project-nested-clone-cargo-workspace, .agents/retro/reports/2026-11-13.md.
+- Retro candidate (project-context): "ocx-previous pins 0.6.5, not the last release 0.6.6 (D-31 follow-up)" — ledger project-ocx-previous-pin-stale, .agents/retro/reports/2026-11-13.md.
+- Retro candidate (project-context): "Wall-clock-budgeted gates red under host contention while every test passes; re-run alone before investigating" — ledger project-wall-clock-budget-contention, .agents/retro/reports/2026-11-13.md.
+- Retro candidate (project-context): "Run `ocx exec -- task …` from the repo root; from test/ it resolves the test/ocx.toml fixture (exit 75)" — ledger project-exec-cwd-resolves-test-fixture, .agents/retro/reports/2026-11-13.md.
+- Retro candidate (project-context): "Local Windows runs need go-task on the Windows PATH; check `where task` before the cold cross-build" — ledger project-windows-local-task-missing, .agents/retro/reports/2026-11-13.md.
 
 - **Plan (hex/patch-lock-advisory-tag, 2026-09-29, review): `.claude/artifacts/plan_patch_lock_advisory_tag.md`** — tag-scoped patch rules vs `ocx.lock`; WP1+WP2 merged, L2 fixed; hex-review (high) round-2 findings applied (one lock-currency predicate); next `/hex-review`.
 - **Plan (hex/code-docs-cleanup, 2026-09-28, plan-approved): `.claude/artifacts/plan_code_docs_cleanup.md`** —

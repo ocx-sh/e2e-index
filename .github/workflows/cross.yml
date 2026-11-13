@@ -91,11 +91,12 @@ jobs:
           version: '0.6.2'
           cache: false
       # Reads and writes the shared cache; with no secret (a fork PR, or a caller that passed none) the
-      # action writes no rc and Bazel runs uncached.
+      # action writes no rc and Bazel runs uncached. A stamped build is the release bytes: it is handed no
+      # credential even when a caller passes one.
       - name: Bazel cache credential
         uses: ./.github/actions/bazel-cache-rc
         with:
-          write-auth: ${{ secrets.BAZEL_CACHE_WRITE_AUTH }}
+          write-auth: ${{ !inputs.stamp && secrets.BAZEL_CACHE_WRITE_AUTH || '' }}
       # NO release-provenance `--scan` here. The old cross-compile job ran it
       # over a real `--release` cargo build; this job has no such build, and
       # the Bazel-built `ocx` deliberately carries the `__testing` placeholder

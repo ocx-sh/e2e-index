@@ -59,6 +59,7 @@ Run:
 
 from __future__ import annotations
 
+import ast
 import copy
 import functools
 import json
@@ -1312,6 +1313,8 @@ CACHE_HOST = "bazel-cache.ocx.sh"
 WRITE_SECRET = "BAZEL_CACHE_WRITE_AUTH"
 #: The only binding a cache step may carry: no event predicate, no fallback.
 WRITE_AUTH = "${{ secrets.BAZEL_CACHE_WRITE_AUTH }}"
+#: The one gated form: `cross.yml` withholds the credential from a stamped build (D-24), the release bytes.
+STAMP_GATED_WRITE_AUTH = "${{ !inputs.stamp && secrets.BAZEL_CACHE_WRITE_AUTH || '' }}"
 RC_ACTION = ".github/actions/bazel-cache-rc"
 TELEMETRY_SECRET = "OTEL_OTLP_AUTH"
 TELEMETRY_AUTH = "${{ secrets.OTEL_OTLP_AUTH }}"
@@ -1657,13 +1660,15 @@ def _write_credential_findings(documents: list[tuple[str, dict]]) -> list[str]:
 
     "Exactly" means no event predicate, no fallback and no step-level `if:`: a gate would
     withhold the cache from lanes that should share it, and an `|| ''` is the shape a gate
-    takes. The write secret is named only as a credential input or a by-name pass-through.
+    takes. The one exception is `cross.yml`'s `STAMP_GATED_WRITE_AUTH`, which withholds it from
+    a stamped build only. The write secret is named only as a credential input or a by-name pass-through.
     """
     findings = []
     for where, _, job in _jobs(documents):
         for index, step in enumerate(job.get("steps") or []):
             auth = _cache_writer_auth(step)
-            if auth is not None and " ".join(auth.split()) != WRITE_AUTH:
+            allowed = {WRITE_AUTH, STAMP_GATED_WRITE_AUTH} if where.startswith("cross.yml:") else {WRITE_AUTH}
+            if auth is not None and " ".join(auth.split()) not in allowed:
                 findings.append(f"{where}[{index}] passes {auth.strip()!r}, not `{WRITE_AUTH}`")
             if auth is not None and "if" in step:
                 findings.append(f"{where}[{index}] gates the cache credential with `if: {step['if']}`")
@@ -1751,10 +1756,13 @@ def _callers_without_the_secret(documents: list[tuple[str, dict]]) -> list[str]:
             findings.append(f"{where} calls {callee} with `secrets: inherit`")
             continue
         passed = passed if isinstance(passed, dict) else {}
+        # A stamped cross-build is handed no cache credential (D-24); the callee withholds it even if passed.
+        stamped = callee == "cross.yml" and str((job.get("with") or {}).get("stamp")).lower() == "true"
         findings += [
             f"{where} calls {callee} without passing the secret {secret}"
             for secret, spec in _declared_secrets(by_name[callee]).items()
-            if secret not in passed and (secret == WRITE_SECRET or (spec or {}).get("required") is True)
+            if secret not in passed and not (stamped and secret == WRITE_SECRET)
+            and (secret == WRITE_SECRET or (spec or {}).get("required") is True)
         ]
         if WRITE_SECRET in passed and " ".join(str(passed[WRITE_SECRET]).split()) != WRITE_AUTH:
             findings.append(f"{where} passes {WRITE_SECRET} as {str(passed[WRITE_SECRET]).strip()!r}, not `{WRITE_AUTH}`")
@@ -2768,12 +2776,23 @@ def _tracked_taskfiles() -> list[Path]:
     return [ROOT / name for name in listed]
 
 
+def _stamped_release_lines(path: Path) -> set[int]:
+    """The line numbers of `cross.taskfile.yml`'s `build:release` task: stamped bytes are built with no cache credential (D-24)."""
+    if path.name != "cross.taskfile.yml":
+        return set()
+    lines = path.read_text(encoding="utf-8").splitlines()
+    start = next(i for i, line in enumerate(lines) if line == "  build:release:")
+    end = next((i for i in range(start + 1, len(lines)) if re.match(r"  \S", lines[i])), len(lines))
+    return set(range(start + 1, end + 1))
+
+
 def test_every_task_bazel_call_passes_the_cache_rc_first() -> None:
     seen = 0
     missing: list[str] = []
     for path in _tracked_taskfiles():
+        stamped = _stamped_release_lines(path)
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-            if line.lstrip().startswith("#"):
+            if line.lstrip().startswith("#") or number in stamped:
                 continue
             for call in _TASK_BAZEL_CALL.finditer(line):
                 seen += 1
@@ -3755,6 +3774,9 @@ def test_the_plan_step_plans_a_release_a_candidate_and_a_dev_build(tmp_path: Pat
 _PLAN_REFUSALS = {
     "a-wrong-ref": ('[[ "$GITHUB_REF" != "refs/heads/main" ]]', "false", {"MODE": "release", "VERSION": "0.10.0", "GITHUB_REF": "refs/heads/feature"}),
     "a-wrong-repository": ('[[ "$REPOSITORY_ID_ACTUAL" != "$REPOSITORY_ID" ]]', "false", {"MODE": "release", "VERSION": "0.10.0", "REPOSITORY_ID_ACTUAL": "1"}),
+    "a-dotted-candidate": ('! [[ "$VERSION" =~ $shape ]]', "false", {"MODE": "candidate", "VERSION": "0.10.0-rc.1"}),
+    "a-release-with-a-prerelease": ('! [[ "$VERSION" =~ $shape ]]', "false", {"MODE": "release", "VERSION": "0.10.0-rc1"}),
+    "a-candidate-without-a-number": ('! [[ "$VERSION" =~ $shape ]]', "false", {"MODE": "candidate", "VERSION": "0.10.0-rc"}),
     "an-existing-tag": ('git rev-parse --quiet --verify "refs/tags/v${VERSION}" >/dev/null', "false", {"MODE": "release", "VERSION": "0.9.0"}),
     "an-unknown-mode": ("echo \"::error::mode '$MODE' is not release, candidate or dev\"\n    exit 1", "semver=x tag=x package=x git_tag=x", {"MODE": "publish", "VERSION": "0.10.0"}),
 }
@@ -3914,15 +3936,42 @@ def _oci_platform(triple: str) -> str:
     return f"{os_name}/{'amd64' if arch == 'x86_64' else 'arm64'}"
 
 
-def _asset_findings(documents: list[tuple[str, dict]]) -> list[str]:
+V066_ASSETS = ROOT / "scripts" / "tests" / "fixtures" / "v0.6.6" / "assets.txt"
+RELEASE_ASSETS = ROOT / "scripts" / "release_assets.py"
+
+
+def _v066_archive_triples() -> set[str]:
+    """The asset triples of the archives v0.6.6 shipped, read from the fixture copied off that release."""
+    names = V066_ASSETS.read_text(encoding="utf-8").split()
+    triples = {m.group(1) for name in names if (m := re.fullmatch(r"ocx-(.+)\.(?:tar\.gz|zip)", name))}
+    assert len(triples) == 8, f"the v0.6.6 fixture stopped being read: {sorted(triples)}"
+    return triples
+
+
+def _asset_target() -> dict[str, str]:
+    """`ASSET_TARGET` of `scripts/release_assets.py`: the build triple of each archive it writes."""
+    for node in ast.parse(RELEASE_ASSETS.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", None) == "ASSET_TARGET":
+            return ast.literal_eval(node.value)
+    raise AssertionError("release_assets.py defines no ASSET_TARGET")
+
+
+def _asset_findings(documents: list[tuple[str, dict]], v066: set[str] | None = None) -> list[str]:
     by_name = dict(documents)
     release = by_name["release.yml"]
     rows = [line.split() for line in str(release["env"]["PLATFORMS"]).splitlines() if line.strip()]
+    v066 = _v066_archive_triples() if v066 is None else v066
     findings = []
-    # The glibc Linux binaries are built and release-tested but never published; every other cross-built triple ships.
-    shipped = {_asset_triple(t) for t in _cross_targets() if not t.endswith("-unknown-linux-gnu")}
+    # C-017(f): the archives the build writes are v0.6.6's, and what the workflow publishes is those minus the
+    # glibc Linux ones, which are built and release-tested but never published.
+    produced = set(_asset_target().values())
+    if produced != v066:
+        findings.append(f"release_assets.py writes {sorted(produced)}, v0.6.6 shipped {sorted(v066)}")
+    if {_asset_target().get(t) for t in _cross_targets()} != v066:
+        findings.append(f"the cross targets {sorted(_cross_targets())} do not map onto the v0.6.6 archives {sorted(v066)}")
+    shipped = {t for t in v066 if not t.endswith("-unknown-linux-gnu")}
     if {asset for asset, _ in rows} != shipped:
-        findings.append(f"PLATFORMS assets {sorted(a for a, _ in rows)} differ from the cross targets that ship {sorted(shipped)}")
+        findings.append(f"PLATFORMS assets {sorted(a for a, _ in rows)} differ from the v0.6.6 archives that ship {sorted(shipped)}")
     findings += [f"{asset} is published as {platform}, not {_oci_platform(asset)}" for asset, platform in rows if platform != _oci_platform(asset)]
     if len({platform for _, platform in rows}) != len(rows) or len(rows) != 6:
         findings.append(f"expected six distinct platforms, got {rows}")
@@ -4069,3 +4118,304 @@ def test_the_readiness_gate_builds_the_stamped_cross_binaries_and_tests_six_plat
     assert _needs(jobs["assets"]) == ["plan", "cross"] and _needs(jobs["acceptance"]) == ["stage", "scan"], (jobs["assets"], jobs["acceptance"])
     assert len(_readiness_matrix("acceptance")) == 6 and len(_readiness_matrix("stage")) == 6
     assert {"plan", "cross", "assets", "scan", "stage", "acceptance"} <= set(_needs(jobs["verdict"])), "the verdict must wait for every job"
+
+
+# ---------------------------------------------------------------------------
+# Signed releases, review fixes: the cache credential, the floating tags, the signer identity,
+# and the real command lines the workflows call.
+# ---------------------------------------------------------------------------
+
+_BAZEL_WRITE_AUTH = "BAZEL_CACHE_WRITE_AUTH"
+
+
+def _cache_credential_findings(documents: list[tuple[str, dict]]) -> list[str]:
+    """No stamped cross-build is handed the cache write credential: stamped bytes are the release."""
+    findings, stamped_callers = [], 0
+    by_name = dict(documents)
+    for where, _, job in _jobs(documents):
+        if _local_callee(job) != "cross.yml" or str((job.get("with") or {}).get("stamp")).lower() != "true":
+            continue
+        stamped_callers += 1
+        if job.get("secrets"):
+            findings.append(f"{where} passes {sorted(job['secrets'])} to a stamped cross-build")
+    if stamped_callers < 2:
+        findings.append(f"only {stamped_callers} stamped cross callers were found (release.yml and release-readiness.yml)")
+    cross = by_name["cross.yml"]["jobs"]["cross"]["steps"]
+    writers = [s for s in cross if str(s.get("uses", "")).endswith("/bazel-cache-rc") and "write-auth" in (s.get("with") or {})]
+    for step in writers:
+        value = str(step["with"]["write-auth"])
+        if _BAZEL_WRITE_AUTH in value and "inputs.stamp" not in value:
+            findings.append(f"cross.yml hands the cache credential to a stamped build: write-auth is {value!r}")
+    if not writers:
+        findings.append("cross.yml has no cache credential step to check (the reader stopped matching)")
+    return findings
+
+
+def test_no_stamped_cross_build_receives_a_cache_credential() -> None:
+    assert _cache_credential_findings(_documents()) == []
+
+
+@pytest.mark.parametrize(
+    ("name", "old", "new"),
+    [
+        pytest.param(
+            "release.yml",
+            "      version: ${{ needs.plan.outputs.semver }}\n\n  build:",
+            "      version: ${{ needs.plan.outputs.semver }}\n    secrets:\n      BAZEL_CACHE_WRITE_AUTH: ${{ secrets.BAZEL_CACHE_WRITE_AUTH }}\n\n  build:",
+            id="release-passes-the-secret",
+        ),
+        pytest.param(
+            "release-readiness.yml",
+            "      version: ${{ needs.plan.outputs.version }}\n\n  assets:",
+            "      version: ${{ needs.plan.outputs.version }}\n    secrets:\n      BAZEL_CACHE_WRITE_AUTH: ${{ secrets.BAZEL_CACHE_WRITE_AUTH }}\n\n  assets:",
+            id="readiness-passes-the-secret",
+        ),
+        pytest.param(
+            "cross.yml",
+            "write-auth: ${{ !inputs.stamp && secrets.BAZEL_CACHE_WRITE_AUTH || '' }}",
+            "write-auth: ${{ secrets.BAZEL_CACHE_WRITE_AUTH }}",
+            id="cross-writes-when-stamped",
+        ),
+    ],
+)
+def test_the_cache_credential_sweep_reds_each_way_a_stamped_build_could_hold_it(name: str, old: str, new: str) -> None:
+    assert _cache_credential_findings(_mutated(name, old, new))
+
+
+def _publish_steps(documents: list[tuple[str, dict]]) -> list[dict]:
+    return dict(documents)["release.yml"]["jobs"]["publish"]["steps"]
+
+
+def _step_run(step: dict) -> str:
+    return "\n".join(line for line in str(step.get("run", "")).splitlines() if not line.lstrip().startswith("#"))
+
+
+def _step_index(steps: list[dict], needle: str) -> int | None:
+    found = [i for i, step in enumerate(steps) if needle in _step_run(step)]
+    return found[0] if len(found) == 1 else None
+
+
+def _cascade_findings(documents: list[tuple[str, dict]]) -> list[str]:
+    """No floating tag moves before every platform is pushed, signed, attested and verified.
+
+    The push step carries no `--cascade`; the one `ocx package cascade repair` step comes after the step that
+    verifies every platform, is scoped to the pushed tag, and precedes the upload of the tags file it extends.
+    """
+    release = dict(documents)["release.yml"]
+    steps = _publish_steps(documents)
+    findings = [f"{job_name} passes --cascade" for job_name, job in release["jobs"].items() if "--cascade" in _job_runs(job)]
+    push, verify, cascade = (_step_index(steps, n) for n in ("publish_ocx_package.sh", "package verify", "package cascade repair"))
+    if None in (push, verify, cascade):
+        return [*findings, f"publish has no unique push/verify/cascade step: {(push, verify, cascade)}"]
+    if not push < verify < cascade:
+        findings.append(f"the steps run push={push}, verify={verify}, cascade={cascade}; they must run in that order")
+    verify_run, cascade_run = _step_run(steps[verify]), _step_run(steps[cascade])
+    if '"$PLATFORMS"' not in verify_run or "--attestation --type cyclonedx" not in verify_run:
+        findings.append("the verify step does not check the signature and the cyclonedx attestation of every platform")
+    if '"${PACKAGE}:${TAG}"' not in cascade_run or '--tags-file "$tags_file"' not in cascade_run:
+        findings.append("the cascade step is not scoped to the pushed tag or does not extend the published tags file")
+    upload = next((i for i, s in enumerate(steps) if str(s.get("uses", "")).startswith("actions/upload-artifact@")), None)
+    if upload is None or upload < cascade:
+        findings.append("the published tags are uploaded before the cascade extended them")
+    return findings
+
+
+def test_the_floating_tags_move_once_after_every_platform_is_pushed_signed_attested_and_verified() -> None:
+    assert _cascade_findings(_documents()) == []
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        pytest.param("flags=(--sign --tags-file", "flags=(--sign --cascade --tags-file", id="push-cascades"),
+        pytest.param('cascade repair --tags-file "$tags_file" "${PACKAGE}:${TAG}"', 'cascade repair --tags-file "$tags_file" "${PACKAGE}"', id="repair-unscoped"),
+        pytest.param("--attestation --type cyclonedx", "--type cyclonedx", id="verify-drops-the-attestation"),
+    ],
+)
+def test_the_cascade_sweep_reds_a_cascading_push_an_unscoped_repair_and_a_thin_verify(old: str, new: str) -> None:
+    assert _cascade_findings(_mutated("release.yml", old, new, count=-1))
+
+
+@pytest.mark.parametrize("move", ["cascade-before-verify", "no-cascade"])
+def test_the_cascade_sweep_reds_a_reordered_and_a_missing_cascade_step(move: str) -> None:
+    documents = copy.deepcopy(_documents())
+    steps = _publish_steps(documents)
+    cascade = _step_index(steps, "package cascade repair")
+    verify = _step_index(steps, "package verify")
+    assert cascade is not None and verify is not None, "the publish job lost its cascade or verify step"
+    if move == "no-cascade":
+        del steps[cascade]
+    else:
+        steps.insert(verify, steps.pop(cascade))
+    assert _cascade_findings(documents)
+
+
+_IDENTITY_LITERAL = re.compile(r"^\$\{\{ github\.server_url \}\}/ocx-sh/ocx/\.github/workflows/release\.yml@refs/heads/main$")
+
+
+def _identity_findings(documents: list[tuple[str, dict]]) -> list[str]:
+    release = dict(documents)["release.yml"]
+    findings = []
+    if not _IDENTITY_LITERAL.fullmatch(str(release["env"].get("RELEASE_IDENTITY"))):
+        findings.append(f"env.RELEASE_IDENTITY is {release['env'].get('RELEASE_IDENTITY')!r}, not the literal main identity")
+    verify = _step_index(_publish_steps(documents), "package verify")
+    if verify is None or "$RELEASE_IDENTITY" not in _step_run(_publish_steps(documents)[verify]):
+        findings.append("the verify step does not read RELEASE_IDENTITY")
+    findings += [
+        f"{where} interpolates an expression into a `run:`"
+        for where, _, job in _jobs([("release.yml", release)])
+        for step in job.get("steps") or []
+        if "${{" in str(step.get("run", ""))
+    ]
+    return findings
+
+
+def test_a_release_and_a_candidate_verify_against_the_literal_main_identity() -> None:
+    assert _identity_findings(_documents()) == []
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        pytest.param("release.yml@refs/heads/main\n", "release.yml@refs/heads/dev\n", id="identity-names-another-ref"),
+        pytest.param('identity="$RELEASE_IDENTITY"', 'identity="${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}"', id="verify-trusts-the-run-ref"),
+        pytest.param("          TAG: ${{ needs.plan.outputs.tag }}\n          OCX_AUTH_ghcr_io_USER: ${{ github.actor }}\n          OCX_AUTH_ghcr_io_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n        run: |\n          set -euo pipefail\n          if [[", "          TAG: ${{ needs.plan.outputs.tag }}\n          OCX_AUTH_ghcr_io_USER: ${{ github.actor }}\n          OCX_AUTH_ghcr_io_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n        run: |\n          set -euo pipefail\n          echo ${{ github.ref }}\n          if [[", id="an-expression-in-run"),
+    ],
+)
+def test_the_identity_sweep_reds_a_moved_literal_a_run_derived_identity_and_an_interpolated_run(old: str, new: str) -> None:
+    assert _identity_findings(_mutated("release.yml", old, new))
+
+
+def _run_verify_step(tmp: Path, steps: list[dict], mode: str) -> list[str]:
+    """Run the verify step with a recording `ocx`, from a feature-branch run; the certificate identities it asked for."""
+    script = _step_run(steps[_step_index(steps, "package verify")])
+    (tmp / "bin").mkdir(exist_ok=True)
+    stub = tmp / "bin" / "ocx"
+    stub.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$STUB_LOG"\n', encoding="utf-8")
+    stub.chmod(0o755)
+    log = tmp / "argv.log"
+    log.write_text("", encoding="utf-8")
+    (tmp / "verify.sh").write_text(script, encoding="utf-8")
+    identity = _load(RELEASE_WORKFLOW)["env"]["RELEASE_IDENTITY"].replace("${{ github.server_url }}", "https://github.com")
+    done = subprocess.run(
+        ["bash", str(tmp / "verify.sh")],
+        env={
+            "PATH": f"{tmp / 'bin'}:{os.environ['PATH']}",
+            "STUB_LOG": str(log),
+            **_release_env(),
+            "RELEASE_IDENTITY": identity,
+            "MODE": mode,
+            "PACKAGE": "ghcr.io/x/y",
+            "TAG": "1.0.0_1",
+            "GITHUB_SERVER_URL": "https://github.com",
+            "GITHUB_WORKFLOW_REF": "ocx-sh/ocx/.github/workflows/release.yml@refs/heads/feature",
+        },
+        capture_output=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    lines = log.read_text(encoding="utf-8").splitlines()
+    return sorted({m.group(1) for line in lines if (m := re.search(r"--certificate-identity (\S+)", line))})
+
+
+@pytest.mark.parametrize(
+    ("mode", "identity"),
+    [
+        ("release", "https://github.com/ocx-sh/ocx/.github/workflows/release.yml@refs/heads/main"),
+        ("candidate", "https://github.com/ocx-sh/ocx/.github/workflows/release.yml@refs/heads/main"),
+        ("dev", "https://github.com/ocx-sh/ocx/.github/workflows/release.yml@refs/heads/feature"),
+    ],
+)
+def test_the_verify_step_pins_main_for_a_release_and_a_candidate_and_the_run_ref_for_a_dev_build(tmp_path: Path, mode: str, identity: str) -> None:
+    assert _run_verify_step(tmp_path, _publish_steps(_documents()), mode) == [identity]
+
+
+def test_the_verify_step_run_trusting_the_run_ref_reds_the_pin(tmp_path: Path) -> None:
+    documents = _mutated("release.yml", 'identity="$RELEASE_IDENTITY"', 'identity="${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}"')
+    assert _run_verify_step(tmp_path, _publish_steps(documents), "release") != [
+        "https://github.com/ocx-sh/ocx/.github/workflows/release.yml@refs/heads/main"
+    ]
+
+
+def test_the_asset_sweep_reds_an_archive_v066_shipped_that_the_build_no_longer_writes() -> None:
+    assert _asset_findings(_documents()) == []
+    missing = _v066_archive_triples() - {"aarch64-apple-darwin"}
+    assert _asset_findings(_documents(), v066=missing), "a v0.6.6 set without an archive left the (f) sweep green"
+    extra = _v066_archive_triples() | {"riscv64gc-unknown-linux-gnu"}
+    assert _asset_findings(_documents(), v066=extra), "an archive the build does not write left the (f) sweep green"
+
+
+# ---------------------------------------------------------------------------
+# The command lines the workflows call are the ones the scripts and the task accept.
+# ---------------------------------------------------------------------------
+
+PUBLISH_SCRIPT = ROOT / "scripts" / "publish_ocx_package.sh"
+BACKFILL_SCRIPT = ROOT / "scripts" / "backfill_release.py"
+_ACTION_FILES = sorted((ROOT / ".github" / "actions").glob("*/action.yml"))
+
+
+def _all_runs() -> list[tuple[str, str]]:
+    """`(where, run text)` of every workflow step and every composite-action step, comment lines dropped."""
+    runs = [(f"{where}#{i}", _step_run(step)) for where, _, job in _jobs(_documents()) for i, step in enumerate(job.get("steps") or [])]
+    for action in _ACTION_FILES:
+        steps = (_load(action).get("runs") or {}).get("steps") or []
+        runs += [(f"{action.parent.name}#{i}", _step_run(step)) for i, step in enumerate(steps)]
+    return [(where, run) for where, run in runs if run]
+
+
+def _long_flags(text: str) -> set[str]:
+    return set(re.findall(r"(?<![\w-])(--[a-z][a-z0-9-]*)", text))
+
+
+def _cli_findings(runs: list[tuple[str, str]]) -> list[str]:
+    publish_flags = set(re.findall(r"^\s+(--[a-z][a-z-]*)\)", PUBLISH_SCRIPT.read_text(encoding="utf-8"), re.M)) | {"--help"}
+    publish_required = {"--identifier", "--platform", "--binary"}
+    py_flags = {path: set(re.findall(r'add_argument\(\s*"(--[a-z-]+)"', path.read_text(encoding="utf-8"))) for path in (RELEASE_ASSETS, BACKFILL_SCRIPT)}
+    py_required = {RELEASE_ASSETS: {"--dist", "--version", "--sha"}, BACKFILL_SCRIPT: {"--package", "--identity", "--issuer"}}
+    build_vars = set(yaml.safe_load(CROSS_TASKFILE.read_text(encoding="utf-8"))["tasks"]["build:release"]["requires"]["vars"])
+    findings, calls = [], {"publish": 0, "assets": 0, "backfill": 0, "cross": 0}
+    for where, run in runs:
+        joined = run.replace("\\\n", " ")
+        if "publish_ocx_package.sh" in joined:
+            calls["publish"] += 1
+            used = _long_flags(joined)
+            findings += [f"{where} passes {f}, which publish_ocx_package.sh does not parse" for f in sorted(used - publish_flags)]
+            findings += [f"{where} omits {f}, which publish_ocx_package.sh requires" for f in sorted(publish_required - used)]
+        for path, label in ((RELEASE_ASSETS, "assets"), (BACKFILL_SCRIPT, "backfill")):
+            if path.name in joined:
+                calls[label] += 1
+                used = _long_flags(joined.split(path.name, 1)[1])
+                findings += [f"{where} passes {f}, which {path.name} does not parse" for f in sorted(used - py_flags[path])]
+                findings += [f"{where} omits {f}, which {path.name} requires" for f in sorted(py_required[path] - used)]
+        if path_call := re.search(r"task cross:build:release((?: [A-Z]+=\S+)*)", joined):
+            calls["cross"] += 1
+            given = set(re.findall(r" ([A-Z]+)=", path_call.group(1)))
+            findings += [f"{where} calls `task cross:build:release` without {v}" for v in sorted(build_vars - given)]
+    findings += [f"no step calls the {name} CLI (the reader stopped matching)" for name, count in calls.items() if not count]
+    return findings
+
+
+def test_the_workflows_call_the_real_script_and_task_command_lines() -> None:
+    assert _cli_findings(_all_runs()) == []
+
+
+def _mutated_runs(old: str, new: str) -> list[tuple[str, str]]:
+    runs = _all_runs()
+    assert any(old in run for _, run in runs), f"mutation did not land: {old!r} is in no step"
+    return [(where, run.replace(old, new)) for where, run in runs]
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        pytest.param('--sha "$GITHUB_SHA"', "", id="assets-without-the-sha"),
+        pytest.param("--dist dist", "--out dist", id="assets-with-a-flag-it-does-not-parse"),
+        pytest.param("--platform \"$platform\"", "", id="publish-without-the-platform"),
+        pytest.param('--annotation "org', '--annotations "org', id="publish-flag-misspelled"),
+        pytest.param('CHANNEL="$CHANNEL"', "", id="cross-build-without-the-channel"),
+        pytest.param("--issuer", "--oidc-issuer", id="backfill-flag-renamed"),
+    ],
+)
+def test_the_command_line_sweep_reds_a_flag_the_script_does_not_parse_and_a_required_one_dropped(old: str, new: str) -> None:
+    assert _cli_findings(_mutated_runs(old, new))

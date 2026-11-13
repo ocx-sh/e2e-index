@@ -19,7 +19,11 @@ name: Release
 # `publish` verifies each platform against that identity before anything else runs. `backfill.yml` is the
 # second identity, for versions published before this workflow signed.
 #
-# The tag `vX.Y.Z` is created by `github-release`, after `publish` has signed, never before.
+# The tag `vX.Y.Z` is created by `github-release`, after `publish` has signed, never before. The floating
+# tags move even later: `publish` pushes all six platforms to the one build tag without `--cascade`, signs and
+# attests each, verifies every platform, and only then runs `ocx package cascade repair` (scoped to that build
+# tag) to write `X.Y.Z`, `X.Y`, `X` and `latest`, or the candidate's and the dev build's rolling tags. No
+# floating tag a user installs from therefore moves before every platform is pushed, signed, attested and verified.
 #
 # Repository values live in the one `env:` block below, so a copy of this file elsewhere differs only there.
 
@@ -68,6 +72,10 @@ env:
     x86_64-pc-windows-msvc windows/amd64
     aarch64-pc-windows-msvc windows/arm64
   OIDC_ISSUER: https://token.actions.githubusercontent.com
+  # The identity a release or a candidate is verified against, pinned here rather than derived from the run: a
+  # run from any other ref cannot pass its own self-verify. A dev build runs from any branch and verifies
+  # against its own workflow ref instead.
+  RELEASE_IDENTITY: ${{ github.server_url }}/ocx-sh/ocx/.github/workflows/release.yml@refs/heads/main
 
 concurrency:
   group: release-${{ inputs.mode }}
@@ -122,6 +130,15 @@ jobs:
           ts="$(date -u +%Y%m%d%H%M%S)"
           case "$MODE" in
             release | candidate)
+              if [[ "$MODE" == candidate ]]; then
+                shape='^[0-9]+\.[0-9]+\.[0-9]+-rc[1-9][0-9]*$'
+              else
+                shape='^[0-9]+\.[0-9]+\.[0-9]+$'
+              fi
+              if ! [[ "$VERSION" =~ $shape ]]; then
+                echo "::error::version '$VERSION' does not fit a $MODE (expected $shape)"
+                exit 1
+              fi
               if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
                 echo "::error::release and candidate run only from refs/heads/main (this run is $GITHUB_REF)"
                 exit 1
@@ -171,6 +188,7 @@ jobs:
     with:
       sha: ${{ github.sha }}
 
+  # No cache secret: the build that produces release bytes holds no credential (D-24).
   cross:
     name: Cross-build (stamped)
     needs: plan
@@ -181,8 +199,6 @@ jobs:
       stamp: true
       channel: ${{ inputs.mode }}
       version: ${{ needs.plan.outputs.semver }}
-    secrets:
-      BAZEL_CACHE_WRITE_AUTH: ${{ secrets.BAZEL_CACHE_WRITE_AUTH }}
 
   build:
     name: Release assets
@@ -248,7 +264,8 @@ jobs:
           set -euo pipefail
           tags_file="$GITHUB_WORKSPACE/published-tags.txt"
           : > "$tags_file"
-          flags=(--sign --cascade --tags-file "$tags_file"
+          # No `--cascade`: the floating tags move in the last step of this job, after the verify.
+          flags=(--sign --tags-file "$tags_file"
             --annotation "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}")
           # Only a release pins its manifests with a keep tag; a candidate or a dev build stays removable.
           [[ "$MODE" == release ]] || flags+=(--no-keep-tag)
@@ -272,13 +289,18 @@ jobs:
           done <<< "$PLATFORMS"
       - name: Verify every platform against this workflow's identity
         env:
+          MODE: ${{ inputs.mode }}
           PACKAGE: ${{ needs.plan.outputs.package }}
           TAG: ${{ needs.plan.outputs.tag }}
           OCX_AUTH_ghcr_io_USER: ${{ github.actor }}
           OCX_AUTH_ghcr_io_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          identity="${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}"
+          if [[ "$MODE" == dev ]]; then
+            identity="${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}"
+          else
+            identity="$RELEASE_IDENTITY"
+          fi
           while read -r asset platform; do
             [[ -n "$asset" ]] || continue
             ocx package verify -p "$platform" \
@@ -288,6 +310,20 @@ jobs:
               --certificate-identity "$identity" --certificate-oidc-issuer "$OIDC_ISSUER" \
               "${PACKAGE}:${TAG}"
           done <<< "$PLATFORMS"
+      # The one place a floating tag is written. Every platform above is pushed under the build tag, signed,
+      # attested and verified before this step runs, so no floating tag moves before then; `cascade repair` only
+      # re-points tags at content the registry already serves (it uploads nothing) and is scoped to this build tag.
+      # It also appends the tags it moved to the file `announce` reads.
+      - name: Move the floating tags
+        env:
+          PACKAGE: ${{ needs.plan.outputs.package }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          OCX_AUTH_ghcr_io_USER: ${{ github.actor }}
+          OCX_AUTH_ghcr_io_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tags_file="$GITHUB_WORKSPACE/published-tags.txt"
+          ocx package cascade repair --tags-file "$tags_file" "${PACKAGE}:${TAG}"
       - name: Upload the published tags
         if: ${{ inputs.mode != 'dev' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

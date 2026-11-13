@@ -9,13 +9,13 @@ use crate::{Digest, OciIdentifier, PinnedOciIdentifier, native};
 #[derive(Debug, thiserror::Error, ocx_exit::Classify)]
 pub enum ClientError {
     /// Authentication with the registry failed.
-    #[error("registry authentication failed: {0}")]
+    #[error("registry authentication failed")]
     #[exit(
         AuthError,
         slug = "registry_auth_failed",
         summary = "The registry rejected the request's authentication"
     )]
-    Authentication(Box<dyn std::error::Error + Send + Sync>),
+    Authentication(#[source] Box<dyn std::error::Error + Send + Sync>),
     /// Digest mismatch between expected and actual content hash, for manifests and verified blobs.
     #[error("digest mismatch: expected '{expected}', got '{actual}'")]
     #[exit(

@@ -358,17 +358,17 @@ def test_rerunning_a_finished_prune_reports_absent_and_repeats_the_tags_file(
     )
 
 
-def test_a_tags_file_that_cannot_be_written_exits_74_after_the_deletes(
+def test_a_tags_file_that_cannot_be_written_exits_74_before_any_delete(
     ocx: OcxRunner, unique_repo: str, tmp_path: Path, index_server: static_index.StaticIndexServer
 ) -> None:
+    # Deleting first would lose the record the announce needs: a rerun reports the tag absent.
     _publish(ocx, unique_repo, [BUILD_1], tmp_path)
     package = _indexed(ocx, index_server, unique_repo, {BUILD_1: True})
 
     result = _prune(ocx, "--tags-file", str(tmp_path / "no-such-directory" / "removed.txt"), package, BUILD_1)
 
     assert result.returncode == 74, result.stderr
-    assert _tags(ocx.registry, unique_repo) == [], "the write failure comes after the deletes, never instead of them"
-    assert _actions(_report(result)) == [(BUILD_1, "deleted", None)]
+    assert _tags(ocx.registry, unique_repo) == [BUILD_1], "an unwritable tags file is refused before any delete"
 
 
 # ---------------------------------------------------------------------------

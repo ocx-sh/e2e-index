@@ -1045,9 +1045,10 @@ mod tests {
                 matches!(&error, PruneError::DeleteDenied { .. }),
                 "{listing_only}: {error:?}"
             );
-            let cause = std::error::Error::source(&error)
+            let cause = std::iter::successors(std::error::Error::source(&error), |e| e.source())
                 .map(ToString::to_string)
-                .unwrap_or_default();
+                .collect::<Vec<_>>()
+                .join(" | ");
             assert!(cause.contains("lacks package read access"), "{listing_only}: {cause}");
         }
     }

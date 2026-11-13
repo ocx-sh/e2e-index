@@ -4244,6 +4244,44 @@ def test_the_cascade_sweep_reds_a_reordered_and_a_missing_cascade_step(move: str
     assert _cascade_findings(documents)
 
 
+def _description_findings(documents: list[tuple[str, dict]]) -> list[str]:
+    steps = _publish_steps(documents)
+    cascade = _step_index(steps, "package cascade repair")
+    desc = _step_index(steps, "package description push")
+    if cascade is None or desc is None:
+        return [f"publish has no unique cascade/description step: {(cascade, desc)}"]
+    run = _step_run(steps[desc])
+    findings = [] if cascade < desc else ["the description is pushed before the cascade"]
+    findings += [f"the description push lacks {flag}" for flag in ("--readme packaging/ocx/CATALOG.md", "--logo assets/logo.svg") if flag not in run]
+    return findings
+
+
+def test_the_publish_job_refreshes_the_catalog_description_after_the_cascade() -> None:
+    assert _description_findings(_documents()) == []
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        pytest.param("--readme packaging/ocx/CATALOG.md", "--readme README.md", id="readme-not-catalog"),
+        pytest.param("--logo assets/logo.svg", "--logo assets/other.svg", id="wrong-logo"),
+    ],
+)
+def test_the_description_sweep_reds_a_wrong_readme_and_a_wrong_logo(old: str, new: str) -> None:
+    assert _description_findings(_mutated("release.yml", old, new))
+
+
+def test_the_description_sweep_reds_a_description_before_the_cascade_and_a_missing_one() -> None:
+    documents = copy.deepcopy(_documents())
+    steps = _publish_steps(documents)
+    cascade, desc = _step_index(steps, "package cascade repair"), _step_index(steps, "package description push")
+    assert cascade is not None and desc is not None
+    steps.insert(cascade, steps.pop(desc))
+    assert _description_findings(documents)
+    del steps[_step_index(steps, "package description push")]
+    assert _description_findings(documents)
+
+
 _IDENTITY_LITERAL = re.compile(r"^\$\{\{ github\.server_url \}\}/ocx-sh/ocx/\.github/workflows/release\.yml@refs/heads/main$")
 
 

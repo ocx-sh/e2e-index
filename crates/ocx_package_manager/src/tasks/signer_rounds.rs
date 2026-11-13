@@ -33,9 +33,9 @@ pub enum RoundsError {
         /// publisher lists share no entry, so no signature was checked.
         reason: Option<Box<VerifyErrorKind>>,
     },
-    /// `--no-verify` was given where the system config requires signatures.
+    /// `--no-verify` or `OCX_NO_VERIFY` was given where the system config requires signatures.
     #[error(
-        "--no-verify is refused for {registry}: the system config file {config_path} sets `signatures` for it, \
+        "--no-verify / OCX_NO_VERIFY is refused for {registry}: the system config file {config_path} sets `signatures` for it, \
          and only an operator can change that"
     )]
     #[exit(

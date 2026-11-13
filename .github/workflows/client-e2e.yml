@@ -1,0 +1,59 @@
+name: client-e2e
+
+# Builds ocx from the named repository and ref and runs its public publisher-trust suite
+# (test/e2e, marker e2e_public) against ghcr.io/ocx-sh/e2e-package and the index served from this repository.
+# Lives here, on the default branch, so it can be dispatched against a ref that is not on ocx-sh/ocx main.
+# No secrets: everything it reads is public.
+on:
+  workflow_dispatch:
+    inputs:
+      ocx_repository:
+        description: Repository to build ocx from, as owner/name.
+        required: false
+        default: ocx-sh/ocx
+        type: string
+      ocx_ref:
+        description: Full 40-character commit SHA to build.
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  client-e2e:
+    if: github.repository_id == '1455949056'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      OCX_REPOSITORY: ${{ inputs.ocx_repository }}
+      OCX_REF: ${{ inputs.ocx_ref }}
+    steps:
+      - name: Validate inputs
+        run: |
+          [[ "$OCX_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "ocx_repository must be owner/name" >&2; exit 64; }
+          [[ "$OCX_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "ocx_ref must be a 40-hex commit SHA" >&2; exit 64; }
+      - name: Check out ocx
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.ocx_repository }}
+          ref: ${{ inputs.ocx_ref }}
+          path: ocx-src
+          submodules: recursive
+          persist-credentials: false
+      - uses: ocx-sh/setup-ocx@25fa771f8572572dc64528db89560de68a163a0e # v1.4.0
+        with:
+          version: '0.6.6'
+          project: ''
+          cache: false
+      - name: Build ocx
+        working-directory: ocx-src
+        env:
+          CARGO_BUILD_JOBS: '4'
+        run: cargo build --locked -p ocx
+      - name: Run the public e2e suite
+        working-directory: ocx-src/test
+        env:
+          OCX_E2E_BINARY: ${{ github.workspace }}/ocx-src/target/debug/ocx
+        run: ocx package exec ocx.sh/astral-sh/uv:0.12.5 -- uv run --python 3.14 pytest e2e -m e2e_public -p no:cacheprovider -v

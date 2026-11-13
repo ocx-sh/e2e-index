@@ -216,7 +216,48 @@ def test_a_network_failure_on_the_package_check_refuses_without_the_token(
     def boom(*_a: object, **_k: object) -> None:
         raise failure
 
-    monkeypatch.setattr(lp.urllib.request, "urlopen", boom)
+    monkeypatch.setattr(lp._OPENER, "open", boom)
     with pytest.raises(lp.Refused) as info:
         lp.ghcr_package_exists("s3cret-token")
     assert "s3cret-token" not in str(info.value)
+
+
+def test_a_redirect_on_the_package_check_is_refused_and_never_followed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import http.server
+    import threading
+
+    hits: list[str] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            hits.append(self.path)
+            if self.path == "/v2/ocx-sh/dev/cli/tags/list":
+                self.send_response(302)
+                self.send_header("Location", "/stolen")
+                self.end_headers()
+            else:
+                self.send_response(200)
+                self.end_headers()
+
+        def log_message(self, *_a: object) -> None:
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        real = lp.urllib.request.Request
+        monkeypatch.setattr(
+            lp.urllib.request,
+            "Request",
+            lambda url, **kw: real(
+                url.replace(f"https://{lp.GHCR}", f"http://127.0.0.1:{server.server_address[1]}"),
+                **kw,
+            ),
+        )
+        with pytest.raises(lp.Refused, match="HTTP 302"):
+            lp.ghcr_package_exists("s3cret-token")
+    finally:
+        server.shutdown()
+    assert hits == ["/v2/ocx-sh/dev/cli/tags/list"], "the redirect target was fetched"

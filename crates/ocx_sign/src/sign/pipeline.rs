@@ -969,6 +969,27 @@ mod tests {
         (result, transport.calls(), temp, signer)
     }
 
+    /// An image index, which a registry enforcing `Accept` serves only when the request names the index type.
+    const INDEX_SUBJECT: &[u8] =
+        br#"{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[]}"#;
+
+    #[tokio::test]
+    async fn signing_an_image_index_subject_works_where_accept_is_enforced_and_names_the_index_type() {
+        let transport = recording_transport()
+            .enforcing_accept()
+            .serving_subject_manifest(INDEX_SUBJECT);
+        let (result, _calls, _temp, _signer) =
+            drive_sign(ocx_oci::client::MirrorMap::default(), transport.clone()).await;
+        if let Err(error) = result {
+            panic!("an index subject must sign where Accept is enforced: {error}");
+        }
+        assert_eq!(
+            transport.pushed_referrer()["subject"]["mediaType"],
+            ocx_oci::OCI_IMAGE_INDEX_MEDIA_TYPE,
+            "the signed subject descriptor must carry the fetched manifest's media type",
+        );
+    }
+
     // ── WP5b: the cosign simplesigning sidecar ──
 
     /// The `.sig` sidecar tag for `indirection_subject_digest()`.

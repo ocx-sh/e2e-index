@@ -694,6 +694,35 @@ mod tests {
         }
     }
 
+    /// An image index, which a registry enforcing `Accept` serves only when the request names the index type.
+    const INDEX_SUBJECT: &[u8] =
+        br#"{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[]}"#;
+
+    #[tokio::test]
+    async fn attesting_an_image_index_subject_works_where_accept_is_enforced_and_names_the_index_type() {
+        let transport = recording_transport()
+            .enforcing_accept()
+            .serving_subject_manifest(INDEX_SUBJECT);
+        let run = drive_attest_with(
+            transport,
+            AttestMode::Signed,
+            PredicateType::CycloneDx,
+            PREDICATE,
+            false,
+            false,
+            SignatureFormat::Bundle,
+        )
+        .await;
+        if let Err(error) = &run.result {
+            panic!("an index subject must attest where Accept is enforced: {error}");
+        }
+        assert_eq!(
+            run.transport.pushed_referrer()["subject"]["mediaType"],
+            ocx_oci::OCI_IMAGE_INDEX_MEDIA_TYPE,
+            "the attested subject descriptor must carry the fetched manifest's media type",
+        );
+    }
+
     /// A minimal SBOM-shaped predicate; the pipeline never reads inside it.
     const PREDICATE: &str = r#"{"bomFormat":"CycloneDX","specVersion":"1.6"}"#;
 

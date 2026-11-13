@@ -2984,6 +2984,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_subject_fetch_reads_an_image_index_where_accept_is_enforced() {
+        let index = br#"{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[]}"#;
+        let digest = ocx_oci::Algorithm::Sha256.hash(index);
+        let transport = RecordingTransport::default()
+            .serving_subject_digest(digest.to_string())
+            .serving_subject_manifest(index)
+            .enforcing_accept();
+        let image: native::Reference = "8.8.8.8/acme/tool:1.0".parse().expect("reference");
+
+        let fetched = pull_subject_manifest_verified(&transport, &image, &digest).await;
+        assert!(
+            matches!(&fetched, Ok(bytes) if bytes == index),
+            "an index subject must be fetched and re-hashed where Accept is enforced: {:?}",
+            fetched.as_ref().err().map(ToString::to_string),
+        );
+    }
+
+    #[tokio::test]
     async fn verify_refuses_a_trust_root_carrying_no_ct_log_key() {
         // A trust root carrying anchors but no CT log key — the shape a
         // hand-assembled document produces. `sigstore` builds an empty keyring

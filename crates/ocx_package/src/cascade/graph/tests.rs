@@ -1960,3 +1960,57 @@ fn c27b_a_duplicate_platform_entry_is_reported_beside_the_staleness_it_hides() {
         [("latest".to_string(), vec!["linux/amd64=sha256:lin".to_string()])]
     );
 }
+
+// ── announce scope ──────────────────────────────────────────────
+
+fn leaf_request(tag: &str) -> Vec<Option<AliasTag>> {
+    vec![Some(AliasTag::Version(
+        Version::parse(tag).expect("fixture version parses"),
+    ))]
+}
+
+fn announce_names(observation: &TagGraphObservation, request: &[Option<AliasTag>]) -> Option<Vec<String>> {
+    let scope = announce_scope(&observation.versions(), &fold_expected(observation), request)?;
+    Some(
+        scope
+            .iter()
+            .map(|alias| match alias {
+                AliasTag::Version(version) => version.to_string(),
+                AliasTag::Root { .. } => "latest".to_string(),
+            })
+            .collect(),
+    )
+}
+
+#[test]
+fn a_prerelease_build_tag_owns_only_its_parent_prerelease() {
+    let observation = Graph::new()
+        .index("1.0.0_b1", vec![entry("linux/amd64", "release")])
+        .index("1.1.0-beta_b1", vec![entry("linux/amd64", "beta")])
+        .build();
+    assert_eq!(
+        announce_names(&observation, &leaf_request("1.1.0-beta_b1")),
+        Some(vec!["1.1.0-beta".to_string()])
+    );
+}
+
+#[test]
+fn a_release_build_tag_owns_no_alias_a_newer_release_took() {
+    let observation = Graph::new()
+        .index("1.0.1_b1", vec![entry("linux/amd64", "old")])
+        .index("1.1.0_b1", vec![entry("linux/amd64", "new")])
+        .build();
+    assert_eq!(
+        announce_names(&observation, &leaf_request("1.0.1_b1")),
+        Some(vec!["1.0.1".to_string(), "1.0".to_string()])
+    );
+}
+
+#[test]
+fn a_request_that_is_not_a_leaf_leaves_the_scope_unbounded() {
+    let observation = Graph::new()
+        .index("1.0.1_b1", vec![entry("linux/amd64", "old")])
+        .build();
+    assert_eq!(announce_names(&observation, &leaf_request("1.0")), None);
+    assert_eq!(announce_names(&observation, &[None]), None);
+}

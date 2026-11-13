@@ -43,7 +43,7 @@ use crate::options;
     index with the fix is a second hop through `ocx package announce`. Refreshing one \
     machine's local copy is `ocx index update`'s job.\n\n\
     `--tags-file` records the tags whose write landed (not `raced`, `refused` or \
-    `failed` ones) and the in-scope tags that already carry the expected content, unioned with \
+    `failed` ones) and the tags a build-tag scope writes that already carry the expected content (never a tag it would not write), unioned with \
     every tag an index-staleness finding names, so one file covers both hops and a retry after a \
     failed announce still lists the tags the first run moved. It is written on every run, empty included, so a workflow can feed it to \
     `announce` unconditionally. A preview contributes no landed tag, and its plan is in the \
@@ -88,14 +88,14 @@ impl PackageCascadeRepair {
 
         let (reports, graphs): (Vec<_>, Vec<_>) = audits
             .into_iter()
-            .map(|audit| (audit.report, (audit.observation, audit.expected)))
+            .map(|audit| (audit.report, (audit.observation, audit.expected, audit.announce_scope)))
             .unzip();
         let mut report =
             crate::api::data::package_cascade_repair::PackageCascadeRepair::from_reports(reports, self.dry_run);
         report.index_layer_skipped = skipped;
         report.tags_file = self.tags_file.clone();
 
-        for (entry, (observation, expected)) in report.items.iter_mut().zip(graphs) {
+        for (entry, (observation, expected, announce_scope)) in report.items.iter_mut().zip(graphs) {
             let planned = graph::plan_repairs(&entry.report, &observation, &expected);
 
             let attempted = self.writes_to_attempt(&planned);
@@ -109,7 +109,7 @@ impl PackageCascadeRepair {
                 let _spinner = context.progress().spinner(format!("Repairing {package}"));
                 apply::apply(context.remote_client()?, &observation.identifier, attempted).await?
             };
-            entry.tags = announce_tags(&entry.report, &entry.outcomes);
+            entry.tags = announce_tags(&entry.report, &entry.outcomes, announce_scope.as_ref());
             entry.planned = planned;
         }
 
@@ -136,8 +136,13 @@ impl PackageCascadeRepair {
 /// finding names, and every in-scope alias that already carries exactly the expected content (a
 /// retry whose first run moved the aliases but never announced them). Never a raced, failed,
 /// refused or unattempted write, since announce commits whatever the registry serves and would
-/// publish a digest this run never wrote.
-fn announce_tags(report: &graph::CascadeReport, outcomes: &[apply::RepairOutcome]) -> Vec<String> {
+/// publish a digest this run never wrote. `scope` bounds the current-alias half to the aliases the
+/// requested build tag writes, so a candidate's announce never creates a floating tag.
+fn announce_tags(
+    report: &graph::CascadeReport,
+    outcomes: &[apply::RepairOutcome],
+    scope: Option<&BTreeSet<graph::AliasTag>>,
+) -> Vec<String> {
     outcomes
         .iter()
         .filter(|outcome| matches!(outcome.outcome, apply::WriteOutcome::Written { .. }))
@@ -147,7 +152,8 @@ fn announce_tags(report: &graph::CascadeReport, outcomes: &[apply::RepairOutcome
                 .aliases
                 .iter()
                 .filter(|(tag, state)| {
-                    **state == graph::AliasState::Present
+                    scope.is_none_or(|scope| scope.contains(*tag))
+                        && **state == graph::AliasState::Present
                         && report
                             .rows
                             .iter()
@@ -344,7 +350,7 @@ mod tests {
         ];
 
         assert_eq!(
-            announce_tags(&report(), &outcomes),
+            announce_tags(&report(), &outcomes, None),
             ["3.28"],
             "announcing a failed or raced alias would commit a digest this run never wrote"
         );
@@ -361,7 +367,7 @@ mod tests {
         });
 
         assert_eq!(
-            announce_tags(&stale, &[]),
+            announce_tags(&stale, &[], None),
             ["latest"],
             "an alias the index never committed is the one drift a repair cannot close itself"
         );
@@ -385,9 +391,61 @@ mod tests {
         );
 
         assert_eq!(
-            announce_tags(&current, &[]),
+            announce_tags(&current, &[], None),
             ["3.28", "latest"],
             "a current alias belongs in the file, an absent one does not"
+        );
+    }
+
+    fn present(report: &mut CascadeReport, tags: &[&str]) {
+        for tag in tags {
+            let alias = match *tag {
+                "latest" => AliasTag::Root { variant: None },
+                tag => AliasTag::Version(Version::parse(tag).expect("fixture version parses")),
+            };
+            report.aliases.insert(alias, graph::AliasState::Present);
+        }
+    }
+
+    fn scope(tags: &[&str]) -> BTreeSet<AliasTag> {
+        let mut holder = report();
+        present(&mut holder, tags);
+        holder.aliases.into_keys().collect()
+    }
+
+    #[test]
+    fn a_prerelease_build_tag_announces_only_its_own_prerelease() {
+        // Check scope climbs through the stable ancestors; a candidate's announce must not.
+        let mut current = report();
+        present(&mut current, &["1.1.0-beta", "1.0", "1", "latest"]);
+
+        assert_eq!(
+            announce_tags(&current, &[], Some(&scope(&["1.1.0-beta"]))),
+            ["1.1.0-beta"],
+            "a candidate that announced `latest` would create a floating tag row"
+        );
+    }
+
+    #[test]
+    fn a_dev_build_tag_announces_only_its_own_dev_alias() {
+        let mut current = report();
+        present(&mut current, &["0.1.0-dev", "0.1", "0", "latest"]);
+
+        assert_eq!(
+            announce_tags(&current, &[], Some(&scope(&["0.1.0-dev"]))),
+            ["0.1.0-dev"]
+        );
+    }
+
+    #[test]
+    fn a_release_build_tag_never_announces_an_alias_a_newer_release_owns() {
+        // Scope `1.0.1_b1` while `1.1.0` holds `1` and `latest`: unbounded, the file named both.
+        let mut current = report();
+        present(&mut current, &["1.0.1", "1.0", "1", "latest"]);
+
+        assert_eq!(
+            announce_tags(&current, &[], Some(&scope(&["1.0.1", "1.0"]))),
+            ["1.0", "1.0.1"]
         );
     }
 }

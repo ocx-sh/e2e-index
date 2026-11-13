@@ -37,7 +37,7 @@ def new_client(e2e_binary: Path) -> None:
 
     The probe is the `contract` the client reports for its own `package verify`: released <= 0.6.6 reports 1,
     the declared-publisher client reports 2. A version compare cannot separate them: this branch's Cargo
-    version is still 0.6.6, and a `__testing` Bazel build reports 0.6.2 on channel `test`.
+    version is still 0.6.6, and a `__testing` Bazel build reports the same version on channel `test`.
     """
     out = subprocess.run([str(e2e_binary), "--format", "json", "version"], capture_output=True, encoding="utf-8", check=True).stdout
     contract = json.loads(out).get("contract", {}).get("commands", {}).get("package verify", 1)

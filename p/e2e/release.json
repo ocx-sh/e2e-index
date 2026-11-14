@@ -38,20 +38,20 @@
       "observed": "2026-11-13T20:38:55Z"
     },
     "0": {
-      "content": "sha256:e7f2c0e0ece17d4a9c49b7c8ebfc8691838f08453bc143937b295189cae2aaf8",
-      "observed": "2026-11-13T21:31:48Z"
+      "content": "sha256:e446e85d74764a8ca3c2dfb002fdb32325e16a517128d6b6234469f713735fdf",
+      "observed": "2026-11-14T00:13:56Z"
     },
     "0.1": {
-      "content": "sha256:e7f2c0e0ece17d4a9c49b7c8ebfc8691838f08453bc143937b295189cae2aaf8",
-      "observed": "2026-11-13T21:31:48Z"
+      "content": "sha256:e446e85d74764a8ca3c2dfb002fdb32325e16a517128d6b6234469f713735fdf",
+      "observed": "2026-11-14T00:13:56Z"
     },
     "0.1.0": {
       "content": "sha256:6b81240bf2a5a61b535668af7f24e33746c9dbe87b73d76a0c180ba463cd6f15",
       "observed": "2026-11-13T20:38:55Z"
     },
     "latest": {
-      "content": "sha256:e7f2c0e0ece17d4a9c49b7c8ebfc8691838f08453bc143937b295189cae2aaf8",
-      "observed": "2026-11-13T21:31:48Z"
+      "content": "sha256:e446e85d74764a8ca3c2dfb002fdb32325e16a517128d6b6234469f713735fdf",
+      "observed": "2026-11-14T00:13:56Z"
     },
     "0.0.1": {
       "content": "sha256:3bdcb0f837a918fa454e6f4d4ec98585ba5585239bf66a4143a5a244c84eb479",
@@ -97,25 +97,13 @@
       "content": "sha256:622afbffb312640ed899d2a5e9950ec8caf3af44d852d0f964574949eb38b10f",
       "observed": "2026-11-13T21:34:09Z"
     },
-    "0.1.2-rc1_20261113213548": {
-      "content": "sha256:14b824bebb06ed5a72f7f035a677c40a8bebb7a2d19602c1ee1132409717f35d",
-      "observed": "2026-11-13T21:41:45Z",
-      "ephemeral": true
+    "0.1.2_20261114000743": {
+      "content": "sha256:bf40a8fd215d624b32c7de569d00f3f12de3789700545f6a49a7143cb7d9ff81",
+      "observed": "2026-11-14T00:13:56Z"
     },
-    "0.1.2-rc1": {
-      "content": "sha256:3f1337516af38706f06df3c5c6b338391465f45463842692c264e4b50f145ed9",
-      "observed": "2026-11-13T21:41:45Z",
-      "ephemeral": true
-    },
-    "0.1.2-rc2_20261113235953": {
-      "content": "sha256:a0db77ac9560afb569da1b79f4b7d7225efd9f5b791fa0bb0345af89e33f29fc",
-      "observed": "2026-11-14T00:04:48Z",
-      "ephemeral": true
-    },
-    "0.1.2-rc2": {
-      "content": "sha256:03a37218820ed2c42786f04b9b2a38e798f1a3ec7ab7dd601e5b15bfb7409559",
-      "observed": "2026-11-14T00:04:48Z",
-      "ephemeral": true
+    "0.1.2": {
+      "content": "sha256:e446e85d74764a8ca3c2dfb002fdb32325e16a517128d6b6234469f713735fdf",
+      "observed": "2026-11-14T00:13:56Z"
     }
   }
 }

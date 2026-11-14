@@ -1,5 +1,4 @@
-# The ocx under test: a dev build of ocx-sh/ocx. Replace PLACEHOLDER with a tag of
-# ghcr.io/ocx-sh/dev/cli (`<X.Y.Z>-dev_<UTC>`), run `ocx lock`, commit this file and ocx.lock.
-# `dev-pin.yml` fails while the tag is a placeholder.
+# The ocx under test: a dev build of ocx-sh/ocx, a tag of ghcr.io/ocx-sh/dev/cli (`<X.Y.Z>-dev_<UTC>`).
+# To move it: change the tag, run `ocx lock`, commit this file and ocx.lock. `dev-pin.yml` runs the pinned build.
 [tools]
-ocx = "ghcr.io/ocx-sh/dev/cli:PLACEHOLDER"
+ocx = "ghcr.io/ocx-sh/dev/cli:0.7.0-dev_20261114022746"

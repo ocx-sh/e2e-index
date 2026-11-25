@@ -32,8 +32,23 @@ Every root is named `e2e.ocx.sh/e2e/<root>`, so the site's copy buttons give ref
 [TESTING.md](TESTING.md) has the setup, the expected exit code of every root and tag, and the SBOM and
 attestation commands. Each package page of the site shows the same text.
 
+## Signed variants
+
+`pages.yml` also serves five full copies of the index, each signed by `scripts/sign-catalog.sh` (`ocx index sign`) on `main` only:
+
+| Path | Signed with |
+|---|---|
+| `/keyless/` | this workflow's identity, 30 days |
+| `/key/` | the key pair of the secrets `E2E_INDEX_SIGNING_KEY` and `E2E_INDEX_SIGNING_KEY_PASSWORD`; public half `keys/e2e-index-key.pub` (PEM, committed alongside the secrets) |
+| `/expired/` | this workflow's identity, `--expires-in-days 0` |
+| `/tampered/` | this workflow's identity, after one `packages` digest was swapped for another root's |
+| `/unsigned/` | not signed |
+
+The signing binary is `OCX_SIGN_PACKAGE` in `pages.yml` (a digest-pinned `ghcr.io/ocx-sh/dev/cli`). A weekly run keeps the 30-day expiry fresh.
+
 ## client-e2e
 
-`.github/workflows/client-e2e.yml` (manual dispatch) builds ocx from `ocx_repository` (default `ocx-sh/ocx`) at a
-40-hex `ocx_ref` and runs `test/e2e` with `-m e2e_public`. The test run receives the built binary in `OCX_E2E_BINARY`
-and configures the `e2e.ocx.sh` index itself. It needs no secrets.
+`.github/workflows/client-e2e.yml` runs on a push to `hex/signing-dogfood-index-signing` and on manual dispatch. It builds ocx from
+`ocx_repository` (default `ocx-sh/ocx`) at `ocx_ref` (a 40-hex SHA or a branch, default the same branch) and runs `test/e2e` with
+`-m e2e_public`, which includes the signed-variant cases and the expiry alert (`indexbot check-expiry`, installed from its branch).
+The test run receives the built binary in `OCX_E2E_BINARY` and configures the `e2e.ocx.sh` index itself. It needs no secrets.

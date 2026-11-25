@@ -3,8 +3,13 @@ name: client-e2e
 # Builds ocx from the named repository and ref and runs its public publisher-trust suite
 # (test/e2e, marker e2e_public) against ghcr.io/ocx-sh/e2e-package and the index served from this repository.
 # Lives here, on the default branch, so it can be dispatched against a ref that is not on ocx-sh/ocx main.
+# A push to the signing-dogfood branch runs it against the same-named ocx branch, so no dispatch is needed; dispatch stays for any other ref.
+# The signed-catalog cases (test_index_signature_public.py) read the variants served by pages.yml, the committed public key
+# keys/e2e-index-key.pub, and the expiry alert, which is indexbot's `check-expiry` installed from its signing-dogfood branch.
 # No secrets: everything it reads is public.
 on:
+  push:
+    branches: [hex/signing-dogfood-index-signing]
   workflow_dispatch:
     inputs:
       ocx_repository:
@@ -13,8 +18,9 @@ on:
         default: ocx-sh/ocx
         type: string
       ocx_ref:
-        description: Full 40-character commit SHA to build.
-        required: true
+        description: Full 40-character commit SHA, or a branch name, to build.
+        required: false
+        default: hex/signing-dogfood-index-signing
         type: string
 
 permissions: {}
@@ -27,8 +33,9 @@ jobs:
     permissions:
       contents: read
     env:
-      OCX_REPOSITORY: ${{ inputs.ocx_repository }}
-      OCX_REF: ${{ inputs.ocx_ref }}
+      OCX_REPOSITORY: ${{ inputs.ocx_repository || 'ocx-sh/ocx' }}
+      OCX_REF: ${{ inputs.ocx_ref || 'hex/signing-dogfood-index-signing' }}
+      INDEXBOT_REF: hex/signing-dogfood-index-signing
     steps:
       - name: Validate inputs
         run: |
@@ -37,7 +44,22 @@ jobs:
             ocx-sh/ocx|ocx-sh/e2e-index) ;;
             *) echo "ocx_repository must be ocx-sh/ocx or ocx-sh/e2e-index" >&2; exit 64 ;;
           esac
-          [[ "$OCX_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "ocx_ref must be a 40-hex commit SHA" >&2; exit 64; }
+          [[ "$OCX_REF" =~ ^[0-9a-f]{40}$ || ( "$OCX_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ && "$OCX_REF" != *..* ) ]] || { echo "ocx_ref must be a 40-hex commit SHA or a branch name" >&2; exit 64; }
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require the committed public key of the key variant
+        run: |
+          [[ -s keys/e2e-index-key.pub ]] || { echo "::error::keys/e2e-index-key.pub is missing: commit the PEM public key of the E2E_INDEX_SIGNING_KEY pair"; exit 1; }
+      # The signing script is shared with ocx-sh/index; a copy that drifted there fails here. Absent there (not merged yet) only warns.
+      - name: Compare sign-catalog.sh with ocx-sh/index
+        run: |
+          if curl -fsS -o "$RUNNER_TEMP/sign-catalog.index.sh" https://raw.githubusercontent.com/ocx-sh/index/main/scripts/sign-catalog.sh; then
+            cmp "$RUNNER_TEMP/sign-catalog.index.sh" scripts/sign-catalog.sh || { echo "::error::scripts/sign-catalog.sh differs from ocx-sh/index"; exit 1; }
+          else
+            echo "::warning::ocx-sh/index has no scripts/sign-catalog.sh on main yet; nothing to compare"
+          fi
       - name: Check out ocx
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -51,6 +73,13 @@ jobs:
           version: '0.6.6'
           project: ''
           cache: false
+      # The released ocx on PATH here is the previous release the install case drives.
+      - name: Install indexbot
+        run: |
+          echo "OCX_TEST_PREVIOUS_OCX=$(command -v ocx)" >> "$GITHUB_ENV"
+          ocx package exec ocx.sh/astral-sh/uv:0.12.5@sha256:04975adbdb9d08cb870de1d1e2e2e26f41d973b0de0429239d97d77246c557ce -- \
+            env UV_TOOL_BIN_DIR="$RUNNER_TEMP/indexbot-bin" uv tool install --python 3.14 "git+https://github.com/ocx-sh/indexbot@$INDEXBOT_REF"
+          echo "INDEXBOT=$RUNNER_TEMP/indexbot-bin/indexbot" >> "$GITHUB_ENV"
       - name: Build ocx
         working-directory: ocx-src
         env:
@@ -61,4 +90,6 @@ jobs:
         working-directory: ocx-src/test
         env:
           OCX_E2E_BINARY: ${{ github.workspace }}/ocx-src/target/debug/ocx
+          OCX_E2E_INDEX_KEY_PUB: ${{ github.workspace }}/keys/e2e-index-key.pub
+          OCX_E2E_CHECK_EXPIRY: ${{ github.workspace }}/scripts/check-expiry.sh
         run: ocx package exec ocx.sh/astral-sh/uv:0.12.5@sha256:04975adbdb9d08cb870de1d1e2e2e26f41d973b0de0429239d97d77246c557ce -- uv run --python 3.14 pytest e2e --confcutdir=e2e -m e2e_public -p no:cacheprovider -v

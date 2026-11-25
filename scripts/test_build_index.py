@@ -1,6 +1,9 @@
 """Unit check for build_index.py's dry-run output: python3 scripts/test_build_index.py"""
 
 import json
+import os
+import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -96,6 +99,81 @@ class DefaultOut(unittest.TestCase):
         self.assertEqual(b.DEFAULT_OUT, Path(__file__).resolve().parent.parent)
         self.assertTrue((b.DEFAULT_OUT / "config.json").is_file())
         self.assertFalse((b.DEFAULT_OUT / "docs").exists())
+
+
+class Variants(unittest.TestCase):
+    """The five index copies the pages workflow signs (C-505): a full copy each, `tampered` carries a swapped root digest."""
+
+    def make(self, tmp):
+        src = Path(tmp) / "wire-src"
+        b.build(src, {t: b.fixture_index(t) for t in b.TAGS}, "2026-01-01T00:00:00Z")
+        out = Path(tmp) / "variants"
+        b.make_variants(src, out)
+        return src, out
+
+    def test_five_full_copies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src, out = self.make(tmp)
+            self.assertEqual(sorted(p.name for p in out.iterdir()), sorted(b.VARIANTS))
+            self.assertEqual(sorted(b.VARIANTS), ["expired", "key", "keyless", "tampered", "unsigned"])
+            for name in b.VARIANTS:
+                self.assertTrue((out / name / "config.json").is_file(), name)
+                self.assertEqual((out / name / "p/e2e/none.json").read_bytes(), (src / "p/e2e/none.json").read_bytes())
+                if name != "tampered":
+                    self.assertEqual((out / name / "c/index.json").read_bytes(), (src / "c/index.json").read_bytes(), name)
+
+    def test_tampered_swaps_exactly_one_value_for_another_existing_root_digest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src, out = self.make(tmp)
+            good = json.loads((src / "c/index.json").read_text())["packages"]
+            bad = json.loads((out / "tampered/c/index.json").read_text())["packages"]
+            self.assertEqual(set(good), set(bad))
+            changed = [k for k in good if good[k] != bad[k]]
+            self.assertEqual(len(changed), 1)
+            self.assertIn(bad[changed[0]], set(good.values()) - {good[changed[0]]})
+            self.assertEqual(json.loads((out / "tampered/c/index.json").read_text())["format_version"], 1)
+
+
+class SignCatalogScript(unittest.TestCase):
+    """scripts/sign-catalog.sh with a stub `ocx` that records its argv."""
+
+    SCRIPT = Path(__file__).resolve().parent / "sign-catalog.sh"
+
+    def run_script(self, args, **env):
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / "ocx"
+            log = Path(tmp) / "argv"
+            stub.write_text(f'#!/bin/sh\nprintf \'%s\\n\' "$@" > "{log}"\n')
+            stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+            full = {"PATH": f"{tmp}:{os.environ['PATH']}", **env}
+            result = subprocess.run([str(self.SCRIPT), *args], env=full, capture_output=True, text=True)
+            return result, log.read_text().splitlines() if log.exists() else None
+
+    PKG = "ghcr.io/ocx-sh/dev/cli@sha256:" + "a" * 64
+
+    def test_signs_with_the_defaults_and_passes_extra_args_through(self):
+        result, argv = self.run_script(["site", "--key", "env://OCX_SIGNING_KEY"], OCX_SIGN_PACKAGE=self.PKG, OCX_SIGN_REGISTRY="e2e.ocx.sh")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            argv,
+            ["package", "exec", self.PKG, "--", "ocx", "index", "sign", "site", "--registry", "e2e.ocx.sh",
+             "--expires-in-days", "30", "--no-tty", "--key", "env://OCX_SIGNING_KEY"],
+        )
+
+    def test_expiry_days_are_overridable_and_zero_is_kept(self):
+        _, argv = self.run_script(["site"], OCX_SIGN_PACKAGE=self.PKG, OCX_SIGN_EXPIRES_DAYS="0")
+        self.assertEqual(argv[argv.index("--expires-in-days") + 1], "0")
+
+    def test_refuses_a_placeholder_pin_before_running_ocx(self):
+        result, argv = self.run_script(["site"], OCX_SIGN_PACKAGE="ghcr.io/ocx-sh/dev/cli@sha256:PLACEHOLDER")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("PLACEHOLDER", result.stderr)
+        self.assertIsNone(argv)
+
+    def test_refuses_a_missing_pin(self):
+        result, argv = self.run_script(["site"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(argv)
 
 
 if __name__ == "__main__":

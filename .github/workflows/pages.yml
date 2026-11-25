@@ -2,9 +2,17 @@ name: pages
 
 # Renders the root wire tree (config.json, c/, p/) with the ocx-catalog renderer and publishes it; the renderer mirrors the index wire files
 # (/config.json, /c/index.json, /p/**) to the site root unchanged.
+# Beside the root it serves five full copies, each signed (or not) by `ocx index sign` for the client e2e suite:
+#   keyless/   signed by this workflow's own identity      key/       signed with E2E_INDEX_SIGNING_KEY (public half: keys/e2e-index-key.pub)
+#   expired/   keyless, --expires-in-days 0                tampered/  keyless, one catalog root digest swapped before signing
+#   unsigned/  not signed
+# Signing runs on main only, in jobs of their own: `id-token: write` lives in sign-keyless, the key secret in sign-key.
 on:
   push:
     branches: [main]
+  schedule:
+    # Weekly, so the keyless variant's 30-day expiry never lapses.
+    - cron: '17 4 * * 1'
   workflow_dispatch:
 
 permissions: {}
@@ -12,6 +20,12 @@ permissions: {}
 concurrency:
   group: pages
   cancel-in-progress: false
+
+env:
+  # The dev build of ocx that carries `ocx index sign`. Pin by digest; sign-catalog.sh refuses a PLACEHOLDER.
+  OCX_SIGN_PACKAGE: ghcr.io/ocx-sh/dev/cli@sha256:PLACEHOLDER
+  # The registry name the e2e client config gives these variants; written into the signed predicate.
+  OCX_SIGN_REGISTRY: e2e.ocx.sh
 
 jobs:
   build:
@@ -29,14 +43,124 @@ jobs:
       # The renderer reads a source dir holding only the wire files, not the whole repository.
       - run: mkdir wire-src && cp -r config.json c p .nojekyll wire-src/
       - run: bun x ocx-catalog build --out site-out
-      # The index URL promises the committed wire bytes; fail the deploy if the renderer served anything else.
+      # The index URL promises the committed wire bytes; fail the deploy if the renderer served anything else. Runs before any signing.
       - run: diff -r wire-src site-out --exclude=.nojekyll | grep -v '^Only in site-out' | (! grep .)
+      - run: python3 scripts/build_index.py --variants-of wire-src --out variants
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned
+          path: |
+            site-out
+            variants
+          if-no-files-found: error
+
+  sign-keyless:
+    needs: build
+    if: github.repository_id == '1455949056' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unsigned
+          path: unsigned
+      - uses: ocx-sh/setup-ocx@25fa771f8572572dc64528db89560de68a163a0e # v1.4.0
+        with:
+          version: '0.6.6'
+          project: ''
+          cache: false
+      - name: Sign keyless, expired and tampered
+        run: |
+          scripts/sign-catalog.sh unsigned/variants/keyless
+          OCX_SIGN_EXPIRES_DAYS=0 scripts/sign-catalog.sh unsigned/variants/expired
+          scripts/sign-catalog.sh unsigned/variants/tampered
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed-keyless
+          path: |
+            unsigned/variants/keyless
+            unsigned/variants/expired
+            unsigned/variants/tampered
+          if-no-files-found: error
+
+  sign-key:
+    needs: build
+    if: github.repository_id == '1455949056' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require the committed public key and the secrets
+        env:
+          KEY: ${{ secrets.E2E_INDEX_SIGNING_KEY }}
+        run: |
+          [[ -s keys/e2e-index-key.pub ]] || { echo "::error::keys/e2e-index-key.pub is missing: commit the PEM public key of the E2E_INDEX_SIGNING_KEY pair"; exit 1; }
+          [[ -n "$KEY" ]] || { echo "::error::secret E2E_INDEX_SIGNING_KEY is not set"; exit 1; }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unsigned
+          path: unsigned
+      - uses: ocx-sh/setup-ocx@25fa771f8572572dc64528db89560de68a163a0e # v1.4.0
+        with:
+          version: '0.6.6'
+          project: ''
+          cache: false
+      - name: Sign the key variant
+        env:
+          OCX_SIGNING_KEY: ${{ secrets.E2E_INDEX_SIGNING_KEY }}
+          OCX_KEY_PASSWORD: ${{ secrets.E2E_INDEX_SIGNING_KEY_PASSWORD }}
+        run: scripts/sign-catalog.sh unsigned/variants/key --key env://OCX_SIGNING_KEY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed-key
+          path: unsigned/variants/key
+          if-no-files-found: error
+
+  # Smoke check before anything is served: every signed copy carries its bundle, `unsigned/` does not.
+  assemble:
+    needs: [sign-keyless, sign-key]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unsigned
+          path: unsigned
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-keyless
+          path: signed/
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-key
+          path: signed/key
+      - name: Assemble the site and check the bundles
+        run: |
+          set -euo pipefail
+          cp -r unsigned/site-out site
+          for variant in keyless key expired tampered; do
+            [[ -s signed/$variant/c/index.json.sigstore.json ]] || { echo "::error::variant $variant has no signature bundle"; exit 1; }
+            cp -r "signed/$variant" "site/$variant"
+          done
+          cp -r unsigned/variants/unsigned site/unsigned
+          [[ ! -e site/unsigned/c/index.json.sigstore.json ]] || { echo "::error::variant unsigned carries a signature"; exit 1; }
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
-          path: site-out
+          path: site
 
   deploy:
-    needs: build
+    needs: assemble
     runs-on: ubuntu-24.04
     permissions:
       pages: write

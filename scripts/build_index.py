@@ -6,6 +6,8 @@ p/<repo>/o/sha256/<hex>.json dispatch objects (the OCI image index a tag resolve
 
     build_index.py                 read every tag's image index from ghcr.io anonymously, write the repository root
     build_index.py --dry-run       fixture digests and a fixed timestamp, no network
+    build_index.py --variants-of wire-src --out variants
+                                   copy a built wire tree into the five signing variants (pages.yml signs them)
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 import sys
 import urllib.parse
 import urllib.request
@@ -221,11 +224,33 @@ def keep_release_root(out: Path, observed: str, catalog: dict[str, str]) -> None
     catalog[RELEASE_ROOT] = sha256(path.read_bytes())
 
 
+# The index variants pages.yml serves beside the root, each a full copy; how each is signed is in pages.yml.
+VARIANTS = ("keyless", "key", "expired", "tampered", "unsigned")
+
+
+def make_variants(src: Path, out: Path) -> None:
+    """Copy the wire tree `src` into `out/<variant>`; `tampered` swaps one catalog value for another root's digest.
+
+    The swap happens before signing: the signature then verifies and the client's root-digest check is what refuses.
+    """
+    for name in VARIANTS:
+        shutil.copytree(src, out / name)
+    path = out / "tampered" / "c" / "index.json"
+    catalog = json.loads(path.read_text())
+    first, second = sorted(catalog["packages"])[:2]
+    catalog["packages"][first] = catalog["packages"][second]
+    path.write_bytes(canonical(catalog))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--dry-run", action="store_true", help="use fixture digests; touch no network")
+    parser.add_argument("--variants-of", type=Path, metavar="DIR", help="copy this wire tree into the variants under --out")
     args = parser.parse_args()
+    if args.variants_of:
+        make_variants(args.variants_of, args.out)
+        return
     if args.dry_run:
         indexes = {tag: fixture_index(tag) for tag in TAGS}
         observed = "2026-01-01T00:00:00Z"

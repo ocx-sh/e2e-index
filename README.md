@@ -44,7 +44,7 @@ attestation commands. Each package page of the site shows the same text.
 | `/tampered/` | this workflow's identity, after one `packages` digest was swapped for another root's |
 | `/unsigned/` | not signed |
 
-The signing binary is `OCX_SIGN_PACKAGE` in `pages.yml` (a digest-pinned `ghcr.io/ocx-sh/dev/cli`). A weekly run keeps the 30-day expiry fresh.
+The signing binary is the digest-pinned `ghcr.io/ocx-sh/dev/cli` in `scripts/ocx-sign.pin`; `scripts/sign-catalog.sh` is the byte-identical copy of the one in ocx-sh/index. A weekly run keeps the 30-day expiry fresh.
 
 ## client-e2e
 

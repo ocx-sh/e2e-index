@@ -1,0 +1,3 @@
+# The ocx build that signs the index variants: one package reference, read by scripts/sign-catalog.sh.
+# A dev build of the unmerged ocx branch that carries `ocx index sign`; swap for the released ocx.sh/ocx package once it ships.
+ghcr.io/ocx-sh/dev/cli@sha256:2fc91474596857f97f809ba401201079979de56e028cb12d591d531a91883e40

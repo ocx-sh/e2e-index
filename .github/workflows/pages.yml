@@ -22,10 +22,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # The dev build of ocx that carries `ocx index sign`. Pin by digest; sign-catalog.sh refuses a PLACEHOLDER.
-  OCX_SIGN_PACKAGE: ghcr.io/ocx-sh/dev/cli@sha256:PLACEHOLDER
   # The registry name the e2e client config gives these variants; written into the signed predicate.
-  OCX_SIGN_REGISTRY: e2e.ocx.sh
+  # The signing build is pinned by digest in scripts/ocx-sign.pin.
+  SIGN_REGISTRY: e2e.ocx.sh
 
 jobs:
   build:
@@ -78,7 +77,7 @@ jobs:
       - name: Sign keyless, expired and tampered
         run: |
           scripts/sign-catalog.sh unsigned/variants/keyless
-          OCX_SIGN_EXPIRES_DAYS=0 scripts/sign-catalog.sh unsigned/variants/expired
+          SIGN_EXPIRES_DAYS=0 scripts/sign-catalog.sh unsigned/variants/expired
           scripts/sign-catalog.sh unsigned/variants/tampered
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

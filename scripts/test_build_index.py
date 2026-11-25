@@ -1,5 +1,6 @@
 """Unit check for build_index.py's dry-run output: python3 scripts/test_build_index.py"""
 
+import hashlib
 import json
 import os
 import stat
@@ -134,46 +135,70 @@ class Variants(unittest.TestCase):
             self.assertEqual(json.loads((out / "tampered/c/index.json").read_text())["format_version"], 1)
 
 
+# The same constant sits in ocx-sh/index bot-tools/tests/security/test_signing_job.py: both copies of the script must match.
+SIGN_SCRIPT_SHA256 = "ee0d3f7eee9b440952bcd8e158187db61f4e6441736f718c67d85018b59a4252"
+
+
 class SignCatalogScript(unittest.TestCase):
-    """scripts/sign-catalog.sh with a stub `ocx` that records its argv."""
+    """scripts/sign-catalog.sh with a stub `ocx`: `package exec` answers with the stub's own path, any other call is the signer."""
 
     SCRIPT = Path(__file__).resolve().parent / "sign-catalog.sh"
-
-    def run_script(self, args, **env):
-        with tempfile.TemporaryDirectory() as tmp:
-            stub = Path(tmp) / "ocx"
-            log = Path(tmp) / "argv"
-            stub.write_text(f'#!/bin/sh\nprintf \'%s\\n\' "$@" > "{log}"\n')
-            stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
-            full = {"PATH": f"{tmp}:{os.environ['PATH']}", **env}
-            result = subprocess.run([str(self.SCRIPT), *args], env=full, capture_output=True, text=True)
-            return result, log.read_text().splitlines() if log.exists() else None
-
     PKG = "ghcr.io/ocx-sh/dev/cli@sha256:" + "a" * 64
 
+    def run_script(self, args, pin=PKG, **env):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            stub, log, key = tmp / "ocx", tmp / "argv", tmp / "key"
+            stub.write_text(
+                "#!/bin/sh\n"
+                f'if [ "$1" = package ]; then printf \'%s\\n\' "$@" > "{tmp / "resolve"}"; echo "$0"; exit 0; fi\n'
+                f'printf \'%s\\n\' "$@" > "{log}"\n'
+                f'printf \'%s\\n\' "${{OCX_SIGNING_KEY-unset}}" > "{key}"\n'
+            )
+            stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+            pin_file = tmp / "pin"
+            pin_file.write_text(f"# comment\n{pin}\n")
+            (tmp / "site" / "c").mkdir(parents=True)
+            (tmp / "site" / "c" / "index.json").write_text("{}")
+            full = {"PATH": f"{tmp}:{os.environ['PATH']}", "OCX_SIGN_PIN_FILE": str(pin_file), **env}
+            result = subprocess.run([str(self.SCRIPT), str(tmp / "site"), *args], env=full, capture_output=True, text=True)
+            read = lambda f: f.read_text().splitlines() if f.exists() else None
+            return result, read(log), read(tmp / "resolve"), read(key), str(tmp / "site")
+
     def test_signs_with_the_defaults_and_passes_extra_args_through(self):
-        result, argv = self.run_script(["site", "--key", "env://OCX_SIGNING_KEY"], OCX_SIGN_PACKAGE=self.PKG, OCX_SIGN_REGISTRY="e2e.ocx.sh")
+        result, argv, resolve, key, site = self.run_script(
+            ["--key", "env://OCX_SIGNING_KEY"], SIGN_REGISTRY="e2e.ocx.sh", OCX_SIGNING_KEY="not-a-real-key"
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(resolve[:4], ["package", "exec", self.PKG, "--"])
         self.assertEqual(
             argv,
-            ["package", "exec", self.PKG, "--", "ocx", "index", "sign", "site", "--registry", "e2e.ocx.sh",
-             "--expires-in-days", "30", "--no-tty", "--key", "env://OCX_SIGNING_KEY"],
+            ["index", "sign", site, "--registry", "e2e.ocx.sh", "--expires-in-days", "30", "--key", "env://OCX_SIGNING_KEY"],
         )
+        self.assertEqual(key, ["not-a-real-key"])
+
+    def test_keyless_run_is_no_tty(self):
+        _, argv, *_ = self.run_script([])
+        self.assertEqual(argv[-1], "--no-tty")
 
     def test_expiry_days_are_overridable_and_zero_is_kept(self):
-        _, argv = self.run_script(["site"], OCX_SIGN_PACKAGE=self.PKG, OCX_SIGN_EXPIRES_DAYS="0")
+        _, argv, *_ = self.run_script([], SIGN_EXPIRES_DAYS="0")
         self.assertEqual(argv[argv.index("--expires-in-days") + 1], "0")
 
-    def test_refuses_a_placeholder_pin_before_running_ocx(self):
-        result, argv = self.run_script(["site"], OCX_SIGN_PACKAGE="ghcr.io/ocx-sh/dev/cli@sha256:PLACEHOLDER")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("PLACEHOLDER", result.stderr)
-        self.assertIsNone(argv)
+    def test_refuses_an_unusable_pin_before_running_ocx(self):
+        for pin in ("ghcr.io/ocx-sh/dev/cli@sha256:" + "0" * 64, "ghcr.io/ocx-sh/dev/cli@sha256:PLACEHOLDER", ""):
+            result, argv, resolve, *_ = self.run_script([], pin=pin)
+            self.assertNotEqual(result.returncode, 0, pin)
+            self.assertIsNone(argv)
+            self.assertIsNone(resolve)
 
-    def test_refuses_a_missing_pin(self):
-        result, argv = self.run_script(["site"])
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIsNone(argv)
+    def test_committed_pin_is_a_digest_pin(self):
+        pin = [ln for ln in (self.SCRIPT.parent / "ocx-sign.pin").read_text().splitlines() if ln and not ln.startswith("#")]
+        self.assertEqual(len(pin), 1)
+        self.assertRegex(pin[0], r"^ghcr\.io/ocx-sh/dev/cli@sha256:[0-9a-f]{64}$")
+
+    def test_script_is_the_copy_shared_with_ocx_sh_index(self):
+        self.assertEqual(hashlib.sha256(self.SCRIPT.read_bytes()).hexdigest(), SIGN_SCRIPT_SHA256)
 
 
 if __name__ == "__main__":

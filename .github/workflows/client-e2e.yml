@@ -104,8 +104,11 @@ jobs:
             curl --fail --silent --show-error --location --proto '=https' --output "$RUNNER_TEMP/sig/$variant/index.json.sigstore.json" "$base/$variant/c/index.json.sigstore.json"
           done
           "$verify" "$RUNNER_TEMP/sig/keyless/index.json" "$RUNNER_TEMP/sig/keyless/index.json.sigstore.json"
-          if "$verify" "$RUNNER_TEMP/sig/tampered-catalog/index.json" "$RUNNER_TEMP/sig/tampered-catalog/index.json.sigstore.json"; then
-            echo "::error::the tampered-catalog variant verified: its catalog bytes changed after signing and must be refused"
+          # Exit 1 is cosign's refusal passed through by the script; 2 is the script's own usage error and must not pass for one.
+          rc=0
+          "$verify" "$RUNNER_TEMP/sig/tampered-catalog/index.json" "$RUNNER_TEMP/sig/tampered-catalog/index.json.sigstore.json" || rc=$?
+          if [[ "$rc" -ne 1 ]]; then
+            echo "::error::the tampered-catalog variant must be refused by cosign with exit 1, got $rc"
             exit 1
           fi
       - name: Build ocx

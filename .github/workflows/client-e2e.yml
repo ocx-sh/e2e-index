@@ -5,7 +5,7 @@ name: client-e2e
 # Lives here, on the default branch, so it can be dispatched against a ref that is not on ocx-sh/ocx main.
 # A push to the signing-dogfood branch runs it against the same-named ocx branch, so no dispatch is needed; dispatch stays for any other ref.
 # The signed-catalog cases (test_index_signature_public.py) read the variants served by pages.yml, the committed public key
-# keys/e2e-index-key.pub, and the expiry alert, which is indexbot's `check-expiry` installed from its signing-dogfood branch.
+# keys/e2e-index-key.pub, indexbot's verify-catalog-signature.sh on keyless/ and tampered-catalog/, and the expiry alert, which is indexbot's `check-expiry` installed from its signing-dogfood branch.
 # No secrets: everything it reads is public.
 on:
   push:
@@ -68,6 +68,13 @@ jobs:
           path: ocx-src
           submodules: recursive
           persist-credentials: false
+      - name: Check out indexbot
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ocx-sh/indexbot
+          ref: ${{ env.INDEXBOT_REF }}
+          path: indexbot-src
+          persist-credentials: false
       - uses: ocx-sh/setup-ocx@25fa771f8572572dc64528db89560de68a163a0e # v1.4.0
         with:
           version: '0.6.6'
@@ -80,6 +87,27 @@ jobs:
           ocx package exec ocx.sh/astral-sh/uv:0.12.5@sha256:04975adbdb9d08cb870de1d1e2e2e26f41d973b0de0429239d97d77246c557ce -- \
             env UV_TOOL_BIN_DIR="$RUNNER_TEMP/indexbot-bin" uv tool install --python 3.14 "git+https://github.com/ocx-sh/indexbot@$INDEXBOT_REF"
           echo "INDEXBOT=$RUNNER_TEMP/indexbot-bin/indexbot" >> "$GITHUB_ENV"
+      # indexbot's own signature check, the one catalog-expiry.yml runs against index.ocx.sh: it must accept the served keyless
+      # copy and refuse the copy whose catalog bytes changed after signing. Both fetches precede the checks, so a refusal is never a fetch failure.
+      - name: Verify served catalog signatures with indexbot's script
+        env:
+          COSIGN: ocx package exec ocx.sh/sigstore/cosign:3.1.1 -- cosign
+          SIGNER_IDENTITY: https://github.com/ocx-sh/e2e-index/.github/workflows/pages.yml@refs/heads/main
+          SIGNER_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          set -euo pipefail
+          verify="$GITHUB_WORKSPACE/indexbot-src/scripts/verify-catalog-signature.sh"
+          base=https://ocx-sh.github.io/e2e-index
+          for variant in keyless tampered-catalog; do
+            mkdir -p "$RUNNER_TEMP/sig/$variant"
+            curl --fail --silent --show-error --location --proto '=https' --output "$RUNNER_TEMP/sig/$variant/index.json" "$base/$variant/c/index.json"
+            curl --fail --silent --show-error --location --proto '=https' --output "$RUNNER_TEMP/sig/$variant/index.json.sigstore.json" "$base/$variant/c/index.json.sigstore.json"
+          done
+          "$verify" "$RUNNER_TEMP/sig/keyless/index.json" "$RUNNER_TEMP/sig/keyless/index.json.sigstore.json"
+          if "$verify" "$RUNNER_TEMP/sig/tampered-catalog/index.json" "$RUNNER_TEMP/sig/tampered-catalog/index.json.sigstore.json"; then
+            echo "::error::the tampered-catalog variant verified: its catalog bytes changed after signing and must be refused"
+            exit 1
+          fi
       - name: Build ocx
         working-directory: ocx-src
         env:

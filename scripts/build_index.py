@@ -7,7 +7,9 @@ p/<repo>/o/sha256/<hex>.json dispatch objects (the OCI image index a tag resolve
     build_index.py                 read every tag's image index from ghcr.io anonymously, write the repository root
     build_index.py --dry-run       fixture digests and a fixed timestamp, no network
     build_index.py --variants-of wire-src --out variants
-                                   copy a built wire tree into the five signing variants (pages.yml signs them)
+                                   copy a built wire tree into the six signing variants (pages.yml signs them)
+    build_index.py --alter-signed-catalog DIR
+                                   change the catalog bytes of a signed variant, so its signature no longer matches
 """
 
 from __future__ import annotations
@@ -225,13 +227,14 @@ def keep_release_root(out: Path, observed: str, catalog: dict[str, str]) -> None
 
 
 # The index variants pages.yml serves beside the root, each a full copy; how each is signed is in pages.yml.
-VARIANTS = ("keyless", "key", "expired", "tampered", "unsigned")
+VARIANTS = ("keyless", "key", "expired", "tampered", "tampered-catalog", "unsigned")
 
 
 def make_variants(src: Path, out: Path) -> None:
     """Copy the wire tree `src` into `out/<variant>`; `tampered` swaps one catalog value for another root's digest.
 
     The swap happens before signing: the signature then verifies and the client's root-digest check is what refuses.
+    `tampered-catalog` is copied untouched; `alter_signed_catalog` changes its bytes after signing, so the signature is what refuses.
     """
     for name in VARIANTS:
         shutil.copytree(src, out / name)
@@ -242,12 +245,22 @@ def make_variants(src: Path, out: Path) -> None:
     path.write_bytes(canonical(catalog))
 
 
+def alter_signed_catalog(variant: Path) -> None:
+    """Append one newline to a signed variant's catalog: still the same JSON, but the signed digest no longer matches."""
+    path = variant / "c" / "index.json"
+    path.write_bytes(path.read_bytes() + b"\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--dry-run", action="store_true", help="use fixture digests; touch no network")
     parser.add_argument("--variants-of", type=Path, metavar="DIR", help="copy this wire tree into the variants under --out")
+    parser.add_argument("--alter-signed-catalog", type=Path, metavar="DIR", help="change the catalog bytes of a signed variant")
     args = parser.parse_args()
+    if args.alter_signed_catalog:
+        alter_signed_catalog(args.alter_signed_catalog)
+        return
     if args.variants_of:
         make_variants(args.variants_of, args.out)
         return

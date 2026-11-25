@@ -34,7 +34,7 @@ attestation commands. Each package page of the site shows the same text.
 
 ## Signed variants
 
-`pages.yml` also serves five full copies of the index, each signed by `scripts/sign-catalog.sh` (`ocx index sign`) on `main` only:
+`pages.yml` also serves six full copies of the index, each signed by `scripts/sign-catalog.sh` (`ocx index sign`) on `main` only:
 
 | Path | Signed with |
 |---|---|
@@ -42,6 +42,7 @@ attestation commands. Each package page of the site shows the same text.
 | `/key/` | the key pair of the secrets `E2E_INDEX_SIGNING_KEY` and `E2E_INDEX_SIGNING_KEY_PASSWORD`; public half `keys/e2e-index-key.pub` (PEM, committed alongside the secrets) |
 | `/expired/` | this workflow's identity, `--expires-in-days 0` |
 | `/tampered/` | this workflow's identity, after one `packages` digest was swapped for another root's |
+| `/tampered-catalog/` | this workflow's identity, after the catalog bytes were changed once signed, so the signature no longer matches |
 | `/unsigned/` | not signed |
 
 The signing binary is the digest-pinned `ghcr.io/ocx-sh/dev/cli` in `scripts/ocx-sign.pin`; `scripts/sign-catalog.sh` is the byte-identical copy of the one in ocx-sh/index. A weekly run keeps the 30-day expiry fresh.

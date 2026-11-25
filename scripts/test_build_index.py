@@ -103,7 +103,7 @@ class DefaultOut(unittest.TestCase):
 
 
 class Variants(unittest.TestCase):
-    """The five index copies the pages workflow signs (C-505): a full copy each, `tampered` carries a swapped root digest."""
+    """The six index copies the pages workflow signs (C-505): a full copy each, `tampered` carries a swapped root digest."""
 
     def make(self, tmp):
         src = Path(tmp) / "wire-src"
@@ -112,11 +112,11 @@ class Variants(unittest.TestCase):
         b.make_variants(src, out)
         return src, out
 
-    def test_five_full_copies(self):
+    def test_six_full_copies(self):
         with tempfile.TemporaryDirectory() as tmp:
             src, out = self.make(tmp)
             self.assertEqual(sorted(p.name for p in out.iterdir()), sorted(b.VARIANTS))
-            self.assertEqual(sorted(b.VARIANTS), ["expired", "key", "keyless", "tampered", "unsigned"])
+            self.assertEqual(sorted(b.VARIANTS), ["expired", "key", "keyless", "tampered", "tampered-catalog", "unsigned"])
             for name in b.VARIANTS:
                 self.assertTrue((out / name / "config.json").is_file(), name)
                 self.assertEqual((out / name / "p/e2e/none.json").read_bytes(), (src / "p/e2e/none.json").read_bytes())
@@ -133,6 +133,25 @@ class Variants(unittest.TestCase):
             self.assertEqual(len(changed), 1)
             self.assertIn(bad[changed[0]], set(good.values()) - {good[changed[0]]})
             self.assertEqual(json.loads((out / "tampered/c/index.json").read_text())["format_version"], 1)
+
+
+    def test_tampered_catalog_changes_bytes_only_after_signing_and_keeps_the_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src, out = self.make(tmp)
+            path = out / "tampered-catalog/c/index.json"
+            signed = path.read_bytes()
+            self.assertEqual(signed, (src / "c/index.json").read_bytes())
+            b.alter_signed_catalog(out / "tampered-catalog")
+            self.assertNotEqual(path.read_bytes(), signed)
+            self.assertEqual(json.loads(path.read_bytes()), json.loads(signed))
+            self.assertEqual((out / "keyless/c/index.json").read_bytes(), signed)
+
+    def test_alter_signed_catalog_flag_runs_the_change(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, out = self.make(tmp)
+            before = (out / "tampered-catalog/c/index.json").read_bytes()
+            subprocess.run([sys.executable, str(Path(b.__file__)), "--alter-signed-catalog", str(out / "tampered-catalog")], check=True)
+            self.assertNotEqual((out / "tampered-catalog/c/index.json").read_bytes(), before)
 
 
 # The same constant sits in ocx-sh/index bot-tools/tests/security/test_signing_job.py: both copies of the script must match.
